@@ -1,0 +1,53 @@
+---
+title: "TF activity feature plot"
+author: "Sushma Nagaraj"
+date: "2026-05-15"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+suppressPackageStartupMessages({
+  library(Seurat)
+  library(scCustomize)
+  library(domino2)
+})
+
+here::i_am("3_domino/TF_activity_on_umap.Rmd")
+```
+
+
+```{r}
+dom <- readRDS(here::here("results", "3_domino2", "cell_type_SnC", "Fibroid.domino.rds"))
+
+seu <- readRDS(here::here("data", "3_ser.fib.RDS"))
+
+# subset/order by cells in the domino object
+seu <- seu[,colnames(dom@features)] 
+
+all((colnames(seu) == colnames(dom@features)))
+identical(colnames(seu), colnames(dom@features))
+```
+
+
+```{r}
+tfs <- c("SRF", "TEAD4")
+auc <- dom@features[tfs, ]
+seu <- AddMetaData(seu, t(auc))
+lapply(tfs, function(tf){
+  FeaturePlot_scCustom(seu, features = tf, order = TRUE)
+})
+```
+
+```{r, echo=FALSE, eval=FALSE}
+pdf(here::here("plots_for_figures", "plots", "SuppFig_14", "SRF_TEAD4_activity_scores.umap.pdf"))
+lapply(tfs, function(tf){
+  FeaturePlot_scCustom(seu, features = tf, order = TRUE)
+})
+dev.off()
+```
+
+```{r}
+sessionInfo()
+```

@@ -1,0 +1,211 @@
+---
+title: "SnC clusters ligands communication networks"
+author: "Sushma Nagaraj"
+date: "2024-09-17"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+suppressPackageStartupMessages({
+  library(domino2)
+  library(purrr)
+  library(dplyr)
+  library(tidyr)
+  library(tibble)
+  library(forcats)
+  library(ComplexHeatmap)
+  library(circlize)
+  library(stringr)
+  library(igraph)
+})
+
+here::i_am("3_domino/SnC_stromal_to_immune.Rmd")
+source("functions/network2df.R")
+source("functions/dom_df_to_igraph.R")
+
+## Fig_4
+```
+
+
+```{r}
+tissue <- "Fibroid"
+tissue
+```
+
+# Read in the rec_lig differential linkages
+```{r}
+clusters_of_interest <- c("Monocytes", "Macrophages", "Myeloid", "DC", "Granulocytes", "T_cells", "NK") 
+
+diff_linkages_list <- lapply(clusters_of_interest, function(cluster) {
+  read.csv(here::here("results", "3_domino2", "cell_type_SnC", "differential_linkages_rec_lig_activation",  paste0(cluster, ".differential_linkages.csv")), header = T)
+})
+names(diff_linkages_list) <- clusters_of_interest
+```
+
+# Retain only the linkages found in at least 3 of 4 fibroid samples/ 3 myometrium samples
+```{r}
+diff_linkages <- list_rbind(diff_linkages_list)
+
+#Fibroid
+diff_linkages <- diff_linkages %>%
+  filter(Fibroid_count >= 3)
+
+diff_linkages$key <- paste0(diff_linkages$cluster, "_", diff_linkages$feature)
+```
+
+# Network with ligands from SnC Celltypes
+```{r}
+dom <- readRDS(here::here("results", "3_domino2", "cell_type_SnC", paste0(tissue, ".domino.rds")))
+```
+
+
+```{r}
+cluster <- c("Fibroblast_SnC", "Pericyte_SMC_SnC", "Endo_vein2_SnC")
+cluster
+```
+
+# Extract networks for cluster from the Domino object
+```{r}
+outgoing_network <- network2df(dom = dom, sending_cluster = cluster, rec_clusters = clusters_of_interest)
+```
+
+
+```{r}
+outgoing_network$key <- paste0(outgoing_network$receiving_cluster, "_", outgoing_network$receptor, " <- ", outgoing_network$ligand)
+outgoing_network$ligand_key <- paste0(outgoing_network$sending_cluster, "_", outgoing_network$ligand)
+```
+
+# Read in differentially expressed secreted/Non-secreted for cluster from SnC-vs-nonSnC analysis
+```{r}
+cl <- gsub("_SnC", "", cluster)
+
+de_genes <- lapply(cl, function(x) {
+  SnC.genes <- read.csv(here::here("results", "2_SnC-vs-nonSnC", str_to_lower(tissue), paste0(str_to_lower(tissue), ".", x, ".SnC.genes.csv")), header = TRUE)
+
+  DE_subset <- SnC.genes %>%
+    #filter(p_val_adj < 0.05 & abs(avg_log2FC) > 0.3)
+    filter(p_val_adj < 0.05 & avg_log2FC > 0.3)
+})
+names(de_genes) <- cl
+
+de_genes <- list_rbind(de_genes, names_to = "cell_type")
+de_genes$cell_type <- paste0(de_genes$cell_type, "_SnC")
+de_genes$ligand_key <- paste0(de_genes$cell_type, "_", de_genes$X)
+```
+
+# Networks for ligands present in atleast 3 fibroid samples and DE in SnC populations (compared to non-SnC)
+
+```{r}
+# Colors for network plots
+cluster_cols <- c("Fibroblast_not_SnC", "Pericyte_SMC_not_SnC", "SMC_not_SnC", "Epithelial", "Cycling", "T_cells", "NK", "Lymphatic_endo_not_SnC", "Endo_artery", "Endo_vein2_not_SnC", "Endo_vein1", "DC", "Macrophages", "Monocytes", "Myeloid","Granulocytes", "Fibroblast_SnC", "Pericyte_SMC_SnC", "Lymphatic_endo_SnC", "Endo_vein2_SnC", "SMC_SnC")
+names(cluster_cols) <- c("#E69F00", "#56B4E9", "#009E73", "#0072B2", "#D55E00", "#CC79A7", "#7B7B7B", "#FFCB57", "#AADAF4", "#00EEB0", "#F7F19F", "#FFB679", "#E6BCD3", "#954B01", "#8661D1","#BFA4E4", "#b37a00", "#2ba0e3", "#ffba24", "#00bd8b", "#8B820B")
+
+```
+
+
+# Signaling to Immune
+```{r}
+out.net.sub.immune <- outgoing_network[(outgoing_network$ligand_key %in% de_genes$ligand_key) & (outgoing_network$key %in% diff_linkages$key), ]
+```
+
+## Network plot
+```{r, fig.height=8}
+send_cols <- cluster_cols[cluster_cols %in% cluster]
+rec_cols <- cluster_cols[cluster_cols %in% clusters_of_interest]
+de_genes %>% 
+  filter(p_val_adj < 0.05 & abs(avg_log2FC) > 0.3 & cpdb.secreted) %>%
+  select(X) -> sasp
+sasp <- sasp$X
+names(sasp) <- rep("#00FFFF", length(sasp))
+sasp <- sasp[!duplicated(sasp)]
+
+net <- dom_df_to_igraph_lig_rec(out.net.sub.immune, send_cols, rec_cols, label_additional = sasp)
+coords <- net_layout_lig_rec(net, out.net.sub.immune)
+plot_network(net, coords, 0)
+```
+
+# save network plot, data table
+```{r, echo=FALSE, eval=FALSE}
+svglite::svglite(here::here("plots_for_figures", "plots", "Fig_4", "SnC_to_immune.svg"))
+plot_network(net, coords, 0)
+dev.off()
+
+write.csv(out.net.sub.immune, here::here("plots_for_figures", "data_tables", "Fig_4", "data_in_plots", "SnC_stromal_to_immune.csv"))
+```
+
+
+# Chord diagram
+# Chord diagram function
+```{r}
+circos_plot <- function(network_slice) {
+  set.seed(1)
+  chordDiagram(network_slice[,c("receptor", "transcription_factor", "cluster_cor")],
+              col = network_slice$col, 
+              big.gap = 20,
+               #scale = TRUE,
+              directional = 1, 
+              direction.type = c("diffHeight", "arrows"),
+              link.arr.type = "big.arrow", 
+              annotationTrack = "grid",
+              preAllocateTracks = list(list(track.height = 0.2),
+                                       list(track.height = 0.08)))
+
+  circos.track(track.index = 1,
+               panel.fun = function(x, y) {
+               circos.text(CELL_META$xcenter, 
+                           CELL_META$ylim[1], 
+                           #str_wrap(CELL_META$sector.index, width = 20), 
+                           str_split(CELL_META$sector.index, pattern = "\\.") |> unlist() |> tail(1),
+                           facing = "clockwise", 
+                           cex = 0.8, 
+                           adj = c(0, 0.5), 
+                           niceFacing = TRUE)},
+               bg.border = NA)
+circos.clear()
+}
+```
+
+
+```{r}
+rec <- c("TNFRSF1B", "CD44", "NOTCH2", "CD36", "CD74", "CSF1R", "CXCR4")
+tf <- c("BCL6", "HIF1A", "EOMES", "TBX21", "GATA3", "RUNX3", "RXRA", "ATF5", "NFKB2", "NFKB1", "JUND", "REL", "IRF7", "STAT1", "MYB", "SP3", "CHD2", "GATA1", "ALX1", "TFEC", "KLE13", "IRF1", "IRF8", "RUNX2", "SPIB")
+
+
+cols <- setNames(names(cluster_cols), cluster_cols)
+network_slice <- out.net.sub.immune %>%
+  #filter(receptor %in% rec) %>%
+  filter(receptor %in% rec & transcription_factor %in% tf) %>%
+  mutate(col = recode(receiving_cluster, !!!cols)) %>% 
+  select(receptor, transcription_factor, cluster_cor, receiving_cluster, col) %>%
+  filter(cluster_cor > 0.2) %>%
+  distinct()
+
+# Cluster legend
+network_slice %>% 
+  select(receiving_cluster, col) %>%
+  distinct %>%
+  deframe -> cl_cols
+cl_legend = Legend(labels = names(cl_cols), title = "Cluster", legend_gp = gpar(fill = cl_cols))
+
+circos_plot(network_slice)
+draw(cl_legend, x = unit(2, "mm"), y = unit(6, "mm"), just = c("left", "bottom"))
+```
+
+# save chord diagram, data table
+```{r, echo=FALSE, eval=FALSE}
+pdf(here::here("plots_for_figures", "plots", "Fig_4", "Stromal_to_immune.receptor_TF.chord.pdf"))
+circos_plot(network_slice)
+draw(cl_legend, x = unit(2, "mm"), y = unit(6, "mm"), just = c("left", "bottom"))
+dev.off()
+
+write.csv(network_slice, here::here("plots_for_figures", "data_tables", "Fig_4", "data_in_plots", "rec_TF_corr_in_immune_downstream_of_signaling_from_SnC.csv"))
+```
+
+
+```{r}
+sessionInfo()
+```
+
+

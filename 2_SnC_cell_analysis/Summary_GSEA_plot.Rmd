@@ -1,0 +1,90 @@
+---
+title: "Summary GSEA plot"
+author: "Sushma Nagaraj"
+date: "2024-10-29"
+output: html_document
+---
+
+```{r setup, include=TRUE}
+knitr::opts_chunk$set(echo = TRUE)
+
+suppressPackageStartupMessages({
+  library(dplyr)
+  library(purrr)
+  library(RColorBrewer)
+  library(ggpubr)
+})
+
+here::i_am("2_SnC_cell_analysis/Summary_GSEA_plot.Rmd")
+```
+
+# Clusters of interest
+```{r}
+#SnC_clusters <- c("Fibroblast", "Pericyte_SMC", "Lymphatic_endo", "Endo_vein2")
+SnC_clusters <- c("Fibroblast", "Pericyte_SMC", "Endo_vein2")
+tissue <- "fibroid"
+```
+
+
+# Read in pathways
+```{r}
+gsea_dir <- here::here("results", "2_SnC-vs-nonSnC", tissue, "fgsea")
+gene_set <- "combined_genesets_H_REACTOME"
+
+gsea_res_list <- lapply(SnC_clusters, function(cell_type){
+  res <- read.table(file.path(gsea_dir, gene_set, paste0("fgsea.", tissue, ".", cell_type, ".", gene_set, ".anno.csv")), header = TRUE, sep = "\t")
+})
+names(gsea_res_list) <- SnC_clusters
+
+gsea_res <- list_rbind(gsea_res_list, names_to = "cell_type")
+
+gsea_res$cell_type <- factor(gsea_res$cell_type, levels = c("Fibroblast", "Pericyte_SMC", "Endo_vein2"))
+
+
+pathways_to_plot <- gsea_res %>%
+  filter(Priority. == 1) %>%
+  select(pathway) %>%
+  distinct()
+
+gsea_res_for_plot <- gsea_res %>%
+  filter(pathway %in% pathways_to_plot$pathway & padj < 0.05) 
+  
+#Abbreviate long pathway names
+gsea_res_for_plot$pathway <- gsub("REACTOME_", "R_", gsea_res_for_plot$pathway)
+gsea_res_for_plot$pathway[gsea_res_for_plot$pathway == "R_REGULATION_OF_INSULIN_LIKE_GROWTH_FACTOR_IGF_TRANSPORT_AND_UPTAKE_BY_INSULIN_LIKE_GROWTH_FACTOR_BINDING_PROTEINS_IGFBPS"] <- "R_REGULATION_OF_IGF_TRANSPORT_AND_UPTAKE_BY_IGFBPS"
+gsea_res_for_plot$pathway <- gsub("HALLMARK_", "H_", gsea_res_for_plot$pathway)
+
+gsea_res_for_plot$Annotation.for.plot <- factor(gsea_res_for_plot$Annotation.for.plot, levels = c("ECM assembly & degradation", "Cell adhesion, migration & contraction", "Cell cycle, stress & apoptosis", "Vascular regulation & remodeling", "Growth factor & other signaling", "Metabolism", "Inflammation", "Translation & protein processing", "Other"))
+
+gsea_res_for_plot <- gsea_res_for_plot %>%
+  group_by(Annotation.for.plot) %>% 
+  arrange(Annotation.for.plot) %>%
+  arrange(pathway, .by_group = TRUE)
+
+gsea_res_for_plot$pathway <- factor(gsea_res_for_plot$pathway, unique(gsea_res_for_plot$pathway))
+```
+
+# Plot
+```{r}
+g <- ggplot(gsea_res_for_plot, aes(x = cell_type, y = pathway, color = NES)) +
+  geom_point(size = 4) + 
+  scale_color_gradientn(colours = brewer.pal(9, "YlOrBr")) + 
+  theme_pubr(legend = "right") + 
+  theme(axis.text.y = element_text(size = 10), axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_y_discrete(limits=rev) + 
+  labs(x = NULL, y = NULL)
+```
+
+# Save plot
+```{r, fig.height=8}
+#pdf(here::here("plots_for_figures", "plots", "Fig_2", "Summary_GSEA_plot.pdf"), height = 8)
+g
+#dev.off()
+```
+
+
+```{r}
+sessionInfo()
+```
+
+

@@ -1,0 +1,71 @@
+---
+title: "SnC related genes"
+output: html_document
+date: "2025-01-14"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+suppressPackageStartupMessages({
+  library(Seurat)
+  library(patchwork)
+  library(ggplot2)
+})
+
+here::i_am("1_projectR/SnC_related_genes.umap.Rmd")
+```
+
+
+```{r}
+seu <- readRDS(here::here("data", "3_ser.RDS"))
+
+seu$cell_type <- as.character(seu$Cluster)
+seu$cell_type[seu$Cluster == "0"] <- "Endo_vein1"
+seu$cell_type[seu$Cluster == "1"] <- "Pericyte_SMC"
+seu$cell_type[seu$Cluster == "2"] <- "Endo_vein2"
+seu$cell_type[seu$Cluster == "3"] <- "T_cells"
+seu$cell_type[seu$Cluster == "4"] <- "Endo_artery"
+seu$cell_type[seu$Cluster == "6"] <- "NK"
+seu$cell_type[seu$Cluster == "7"] <- "Damaged_endo"
+seu$cell_type[seu$Cluster == "8"] <- "Lymphatic_endo"
+seu$cell_type[seu$Cluster == "9"] <- "Fibroblast"
+seu$cell_type[seu$Cluster == "11"] <- "Damaged_mye"
+seu$cell_type[seu$Cluster == "12"] <- "Damaged_Epi"
+seu$cell_type[seu$Cluster == "13"] <- "Granulocytes"
+seu$cell_type[seu$Cluster == "14"] <- "SMC"
+seu$cell_type[seu$Cluster == "15"] <- "Cycling"
+seu$cell_type[seu$Cluster == "16"] <- "Epithelial"
+seu$cell_type[seu$Cluster == "5-10.0"] <- "Monocytes"
+seu$cell_type[seu$Cluster == "5-10.1"] <- "DC"
+seu$cell_type[seu$Cluster == "5-10.2"] <- "Myeloid"
+seu$cell_type[seu$Cluster == "5-10.3"] <- "Doublet"
+seu$cell_type[seu$Cluster == "5-10.4"] <- "Macrophages"
+
+remove <- c('Damaged_endo',"Doublet",'Damaged_mye','Damaged_Epi')
+keep <- unique(seu$cell_type)
+keep <- keep[!keep %in% remove]
+seu <- subset(seu, subset = cell_type %in% keep)
+
+#EV1, EV2, EA, Peri, Fibro, SMC, Cycling, Epithelial
+
+```
+
+
+```{r}
+genes <- c("CDKN2A", "CDKN2B", "CDKN1A", "IL6")
+FeaturePlot(seu, features = genes, order = TRUE)
+```
+
+# Feature plots
+```{r, echo=FALSE, eval=FALSE}
+pdf(here::here("plots_for_figures", "plots", "Fig_1", "SnC_related_genes.pdf"))
+FeaturePlot(seu, features = genes, order = TRUE)
+dev.off()
+```
+
+```{r}
+sessionInfo()
+```
+
+

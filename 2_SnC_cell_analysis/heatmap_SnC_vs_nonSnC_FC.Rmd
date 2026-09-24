@@ -1,0 +1,156 @@
+---
+title: "Heatmap of SnC vs non-SnC DE genes"
+author: "Sushma Nagaraj"
+date: "2024-10-25"
+output: html_document
+---
+
+```{r setup, include=TRUE}
+knitr::opts_chunk$set(echo = TRUE)
+
+suppressPackageStartupMessages({
+  library(Seurat)
+  library(dplyr)
+  library(purrr)
+  library(tidyr)
+  library(tibble)
+  library(ComplexHeatmap)
+  library(circlize)
+})
+
+here::i_am("2_SnC_cell_analysis/heatmap_SnC_vs_nonSnC_FC.Rmd")
+```
+
+## Clusters of interest
+```{r}
+SnC_clusters <- c("Fibroblast", "Pericyte_SMC", "Lymphatic_endo", "Endo_vein2")
+tissue <- "fibroid"
+```
+
+
+## SnC vs non-SnC Findmarkers result thresholded on p-value and FC
+```{r}
+de_genes_list <- lapply(SnC_clusters, function(clust) {
+  SnC.genes <- read.csv(here::here("results", "2_SnC-vs-nonSnC", tissue, paste0(tissue, ".", clust, ".SnC.genes.csv")), row.names = 1)
+  SnC.genes <- SnC.genes %>%
+    filter(p_val_adj < 0.05 & abs(avg_log2FC) > 0.3) %>%
+    rownames_to_column()
+})
+names(de_genes_list) <- SnC_clusters
+```
+
+```{r}
+de_genes_interesting <- list_rbind(de_genes_list, names_to = "cell_type") 
+de_genes_interesting$cell_type <- paste0("SnC.", de_genes_interesting$cell_type)
+```
+
+## Create LFC data matrix to plot
+```{r}
+dat.wide <- de_genes_interesting %>%
+  pivot_wider(id_cols = rowname, 
+              names_from = cell_type, 
+              values_from = avg_log2FC) %>%
+  column_to_rownames()
+
+dat.wide[is.na(dat.wide)] <- 0
+
+head(dat.wide)
+```
+
+
+# Heatmap annotation
+## Column annotation
+```{r}
+#Cell type 
+celltype <- colnames(dat.wide)
+names(celltype) <- celltype
+celltype
+
+cell_col <- c("#E69F00", "#56B4E9", "#FFCB57", "#00EEB0")
+names(cell_col) <- c("SnC.Fibroblast", "SnC.Pericyte_SMC", "SnC.Lymphatic_endo", "SnC.Endo_vein2")
+cell_col
+
+sample_anno <- HeatmapAnnotation(
+  Celltype = celltype,
+  col = list(Celltype = cell_col)
+)
+```
+
+## Row annotation
+```{r}
+ann <- de_genes_interesting %>%
+  select(c(rowname, cpdb.secreted, Surfaceome, Division)) %>%
+  unique() %>%
+  mutate(Matrisome = ! is.na(Division))
+rownames(ann) <- ann$rowname
+
+#Split heatmap into Secreted Signaling/Other
+ann$split <- ifelse(ann$cpdb.secreted, "Secreted Signaling", "Other")
+
+
+all(rownames(ann) == rownames(dat.wide))
+head(ann)
+
+sec <- c("whitesmoke", "#FFFF33")
+names(sec) <- c("FALSE", "TRUE")
+
+surface <- c("white", "#F781BF")
+names(surface) <- c("FALSE", "TRUE")
+
+matri <- c("white", "#984EA3")
+names(matri) <- c("FALSE", "TRUE")
+
+gene_anno <- rowAnnotation(
+  Secreted.signaling = ann$cpdb.secreted, 
+  Surface = ann$Surfaceome, 
+  Matrisome = ann$Matrisome,
+  col = list(Secreted.signaling = sec,
+             Surface = surface,
+             Matrisome = matri),
+  annotation_name_side = "top"
+)
+
+```
+
+## Heatmap
+```{r}
+ht <- Heatmap(as.matrix(dat.wide), 
+        col = colorRamp2(c(-2.5, 0, 2.5), colors = c("#3B4CC0", "whitesmoke", "#B40426")), 
+        name = "avg_log2FC", 
+        show_column_names = F, 
+        show_row_names = F,
+        top_annotation = sample_anno, 
+        left_annotation = gene_anno,
+        cluster_columns = T, 
+        cluster_rows = T, 
+        show_row_dend = F, 
+        show_column_dend = F,
+        column_title_rot = 50,
+        row_title_rot = 0,
+        row_split = ann$split,
+        row_gap = unit(3, "mm"),
+        #row_title = c("", ""),
+        column_split = celltype
+)
+```
+
+## Save plot
+```{r, fig.height=10}
+#pdf(here::here("results", "figures", "Fig_2", "Heatmap.SnC_vs_nonSnC_FC.pdf"), width = 8, height = 13)
+ht
+#dev.off()
+```
+
+# Save data used for plotting
+```{r, echo=FALSE, eval=FALSE}
+lapply(names(de_genes_list), function(x) {
+  write.csv(de_genes_list[[x]], here::here("plots_for_figures", "data_tables", "Fig_2", paste0(x, ".SnC_vs_nonSnC.csv")))
+})
+
+```
+
+
+```{r}
+sessionInfo()
+```
+

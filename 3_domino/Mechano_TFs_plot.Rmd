@@ -1,0 +1,157 @@
+---
+title: "TF plots"
+author: "Sushma Nagaraj"
+date: "2025-02-07"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+suppressPackageStartupMessages({
+  library(domino2)
+  library(dplyr)
+  library(tibble)
+  library(tidyr)
+  library(ComplexHeatmap)
+  library(ggplot2)
+  library(ggpubr)
+  library(patchwork)
+})
+
+here::i_am("3_domino/Mechano_TFs_plot.Rmd")
+source("functions/auc_functions.R")
+```
+
+
+```{r}
+mechano_tfs <- c("TEAD4", "PDLIM5", "SRF") #Up in SnC or EV2 and fc > 1.1
+```
+
+
+```{r}
+dom <- readRDS(here::here("results", "3_domino2", "cell_type_SnC", "Fibroid.domino.rds"))
+```
+
+```{r}
+metadata <- readRDS(here::here("results", "1_transfer_learning", "projectR", "sigZ_scActualZscores_genes", "metadata.TL.rds"))
+metadata$Patient_Tissue <- paste0(metadata$Patient, "_", metadata$Tissue)
+metadata$SnC <- ifelse(is.na(metadata$projectR0.01), "not_SnC", "SnC")
+metadata$cell_type_SnC <- metadata$cell_type
+metadata$cell_type_SnC[metadata$cell_type_SnC %in% c("Fibroblast", "Pericyte_SMC", "SMC", "Lymphatic_endo", "Endo_vein2")] <- paste0(metadata$cell_type_SnC[metadata$cell_type_SnC %in% c("Fibroblast", "Pericyte_SMC", "SMC", "Lymphatic_endo", "Endo_vein2")], "_", metadata$SnC[metadata$cell_type_SnC %in% c("Fibroblast", "Pericyte_SMC", "SMC", "Lymphatic_endo", "Endo_vein2")])
+```
+
+
+```{r}
+plot_cl <- c("Endo_vein1", "Endo_vein2_not_SnC", "Endo_vein2_SnC", "Fibroblast_not_SnC", "Fibroblast_SnC", "Pericyte_SMC_not_SnC", "Pericyte_SMC_SnC")
+```
+
+```{r}
+colors <- c("#E69F00", "#56B4E9", "#009E73", "#0072B2", "#D55E00", "#CC79A7", "#7B7B7B", "#FFCB57", "#AADAF4", "#00EEB0", "#F7F19F", "#FFB679", "#E6BCD3", "#954B01", "#8661D1","#BFA4E4", "#F4E0B1", "#CBE5F7", "#FEEEC9", "#C2F8E5", "#8B820B")
+names(colors) <- c("Fibroblast_not_SnC", "Pericyte_SMC_not_SnC", "SMC", "Epithelial", "Cycling", "T_cells", "NK", "Lymphatic_endo", "Endo_artery", "Endo_vein2_not_SnC", "Endo_vein1", "DC", "Macrophages", "Monocytes", "Myeloid","Granulocytes", "Fibroblast_SnC", "Pericyte_SMC_SnC", "Lymphatic_endo_SnC", "Endo_vein2_SnC", "SMC_SnC")
+```
+
+```{r}
+plot.df <- get_tf_auc(dom, tfs = mechano_tfs)
+head(plot.df)
+
+plot.df <- plot.df %>%
+  filter(cluster %in% plot_cl)
+plot.df$cluster <- droplevels(plot.df$cluster)
+plot.df$Patient_Tissue <- metadata[match(rownames(plot.df), rownames(metadata)), "Patient_Tissue"]
+plot.df$Patient_Tissue <- factor(plot.df$Patient_Tissue)
+plot.df <- plot.df %>%
+  group_by(cluster) %>%
+  arrange(Patient_Tissue, .by_group = TRUE)
+cells <- plot.df[,c("cluster", "Patient_Tissue")]  
+plot.df <- plot.df %>%
+  ungroup() %>%
+  select(-c("cluster", "Patient_Tissue"))
+
+plot.df.scale <- scale(plot.df)
+```
+
+
+```{r}
+#cell type colors
+colors.sub <- colors[names(colors) %in% plot_cl] 
+
+#Patient colors
+col.pat <- c("FP10_Fibroid" = "#B0CBE7FF", "FP16_Fibroid" = "#FEF7C7FF", "FP6_Fibroid" = "#EBA07EFF", "FP8_Fibroid" = "#A8554EFF")
+
+cell_anno <- columnAnnotation(cluster = cells$cluster, 
+                              Patient_Tissue = cells$Patient_Tissue,
+                              col = list(cluster = colors.sub, 
+                                         Patient_Tissue = col.pat))
+
+Heatmap(t(plot.df.scale), 
+        show_column_names = F, 
+        cluster_columns = F, 
+        top_annotation = cell_anno,
+        row_names_gp = gpar(fontsize = 9),
+        name = "Scaled_TF_AUC")
+```
+
+
+```{r, eval=FALSE, echo=FALSE}
+pdf(here::here("plots_for_figures", "plots", "Fig_5", "Mechano_TFs.heatmap.pdf"), height = 3)
+Heatmap(t(plot.df.scale), 
+        show_column_names = F, 
+        cluster_columns = F, 
+        top_annotation = cell_anno,
+        row_names_gp = gpar(fontsize = 9),
+        name = "Scaled_TF_AUC")
+dev.off()
+
+```
+
+```{r}
+tf_vln <- function(dom, regulon, plot_clusters = NULL, cols = NULL) {
+  auc_mat <- get_tf_auc(dom, regulon) %>%
+    filter(cluster %in% plot_clusters)
+  auc_mat$cluster <- droplevels(auc_mat$cluster)
+  auc_mat.long <- auc_mat %>%
+    pivot_longer(cols = colnames(auc_mat)[-which(colnames(auc_mat) == "cluster")], names_to = "TF", values_to = "AUC")
+  auc_mat.long$TF <- factor(auc_mat.long$TF, levels = regulon)
+  plot <- ggplot(auc_mat.long, aes(x = cluster, y = AUC, col = cluster, fill = cluster)) + 
+    geom_violin(trim = TRUE, scale = "width", adjust = 1) + 
+    #geom_beeswarm(size = 0.1, method = "compactswarm", corral = "random", corral.width = 0.9) +
+    #geom_point(aes(x = cluster, y = get(regulon)), position = "jitter", size = 0.5) + 
+    facet_grid(rows = "TF") + 
+    theme_classic() + theme(axis.text.x = element_text(angle = 90), legend.position = "none") + 
+    labs(x = NULL, y = "AUC") 
+  if(! is.null(cols)) {
+    myplot <- plot + scale_color_manual(values = cols) + scale_fill_manual(values = cols)
+    return(myplot)
+  }
+  else {
+    return(plot)
+  }
+}
+```
+
+
+```{r}
+regulon <- c("TEAD4", "SRF", "PDLIM5")
+tf_vln(dom, regulon, plot_clusters = plot_cl, cols = colors.sub)
+```
+
+
+```{r, eval=FALSE,echo=FALSE}
+pdf(here::here("plots_for_figures", "plots", "SuppFig_14", "Mechano_TFs.stacked_vln.pdf"), height = 3, width = 2)
+tf_vln(dom, regulon, plot_clusters = plot_cl, cols = colors.sub)
+dev.off()
+```
+
+
+```{r}
+sessionInfo()
+```
+
+
+
+
+
+
+
+

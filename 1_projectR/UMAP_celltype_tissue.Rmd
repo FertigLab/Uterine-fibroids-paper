@@ -1,0 +1,141 @@
+---
+title: "UMAP split by tissue"
+author: "Sushma Nagaraj"
+date: "2025-05-09"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+suppressPackageStartupMessages({
+  library(Seurat)
+  library(patchwork)
+  library(ggplot2)
+})
+
+here::i_am("1_projectR/UMAP_celltype_tissue.Rmd")
+```
+
+# Joscelyn's code for UMAP
+# Prepare seurat object
+```{r}
+seu <- readRDS(here::here("data", "3_ser.RDS"))
+
+cnames <- c('Endo_Vein1','Pericyte_SMC','Endo_Vein2','T_cells','Endo_artery','NK','Damaged_endo','Lymphatic_endo','Fibroblast','Damaged_mye','Damaged_Epi','Granulocytes','SMC','Cycling','Epithelial','Monocytes','DC','Myeloid','Doublet','Macrophages')
+names(cnames) <- c('0','1','2','3','4','6','7','8','9','11','12','13','14','15','16','5-10.0','5-10.1','5-10.2','5-10.3','5-10.4')
+seu <- RenameIdents(seu, cnames)
+remove <- c('Damaged_endo',"Doublet",'Damaged_mye','Damaged_Epi')
+sub <- cnames[!cnames %in% remove]
+
+seu <- subset(seu, idents = sub)
+```
+
+# Color scale for cell types
+```{r}
+colors <- c("#E69F00", "#56B4E9", "#009E73", "#0072B2", "#D55E00", "#CC79A7", "#7B7B7B", "#FFCB57", "#AADAF4", "#00EEB0", "#F7F19F", "#FFB679", "#E6BCD3", "#954B01", "#8661D1","#BFA4E4")
+names(colors) <- c("Fibroblast", "Pericyte_SMC", "SMC", "Epithelial", "Cycling", "T_cells", "NK", "Lymphatic_endo", "Endo_artery", "Endo_Vein2", "Endo_Vein1", "DC", "Macrophages", "Monocytes", "Myeloid","Granulocytes")
+```
+
+# Cell types
+```{r}
+DimPlot(seu, label = T, cols = colors) + 
+  NoLegend() + 
+  theme(axis.text.x=element_blank(),
+        axis.text.y=element_blank(),
+        axis.ticks=element_blank(),
+        axis.title.x=element_blank(),
+        axis.title.y=element_blank(),
+        legend.position="none",
+        panel.background=element_blank(),
+        panel.border=element_blank(),
+        panel.grid.major=element_blank(),
+        panel.grid.minor=element_blank(),
+        plot.background=element_blank())
+```
+
+# Color by tissue
+```{r}
+DimPlot(seu, group.by = 'Tissue', cols = c("#0072B2","#E6BCD3"), alpha = 0.3) + 
+  theme(axis.text.x=element_blank(),
+        axis.text.y=element_blank(),
+        axis.ticks=element_blank(),
+        axis.title.x=element_blank(),
+        axis.title.y=element_blank(),
+        legend.position="none",
+        panel.background=element_blank(),
+        panel.border=element_blank(),
+        panel.grid.major=element_blank(),
+        panel.grid.minor=element_blank(),
+        plot.background=element_blank())
+```
+
+# Split by tissue
+```{r, fig.height=10}
+DimPlot(seu, split.by = 'Tissue', cols = colors, ncol = 1) + 
+  theme(axis.text.x=element_blank(),
+        axis.text.y=element_blank(),
+        axis.ticks=element_blank(),
+        axis.title.x=element_blank(),
+        axis.title.y=element_blank(),
+        legend.position="none",
+        panel.background=element_blank(),
+        panel.border=element_blank(),
+        panel.grid.major=element_blank(),
+        panel.grid.minor=element_blank(),
+        plot.background=element_blank())
+```
+
+# Save plots
+```{r, eval=FALSE, echo=FALSE}
+pdf(here::here("plots_for_figures", "plots", "Fig_1", "UMAP_noDamaged.pdf"), width = 5, height = 5)
+DimPlot(seu, label = T, cols = colors) + 
+  NoLegend() + 
+  theme(axis.text.x=element_blank(),
+        axis.text.y=element_blank(),
+        axis.ticks=element_blank(),
+        axis.title.x=element_blank(),
+        axis.title.y=element_blank(),
+        legend.position="none",
+        panel.background=element_blank(),
+        panel.border=element_blank(),
+        panel.grid.major=element_blank(),
+        panel.grid.minor=element_blank(),
+        plot.background=element_blank())
+dev.off()
+
+pdf(here::here("plots_for_figures", "plots", "Fig_1", "UMAP_Tissue.pdf"), width = 5, height = 5)
+DimPlot(seu, group.by = 'Tissue', cols = c("#0072B2","#E6BCD3"), alpha = 0.3) + 
+  theme(axis.text.x=element_blank(),
+        axis.text.y=element_blank(),
+        axis.ticks=element_blank(),
+        axis.title.x=element_blank(),
+        axis.title.y=element_blank(),
+        legend.position="none",
+        panel.background=element_blank(),
+        panel.border=element_blank(),
+        panel.grid.major=element_blank(),
+        panel.grid.minor=element_blank(),
+        plot.background=element_blank())
+dev.off()
+
+pdf(here::here("plots_for_figures", "plots", "Fig_1", "UMAP_Tissue.split.pdf"), width = 5, height = 10)
+DimPlot(seu, split.by = 'Tissue', cols = colors, ncol = 1) + 
+  theme(axis.text.x=element_blank(),
+        axis.text.y=element_blank(),
+        axis.ticks=element_blank(),
+        axis.title.x=element_blank(),
+        axis.title.y=element_blank(),
+        legend.position="none",
+        panel.background=element_blank(),
+        panel.border=element_blank(),
+        panel.grid.major=element_blank(),
+        panel.grid.minor=element_blank(),
+        plot.background=element_blank())
+dev.off()
+```
+
+```{r}
+sessionInfo()
+```
+

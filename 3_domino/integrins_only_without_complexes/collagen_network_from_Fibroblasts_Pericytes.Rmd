@@ -1,0 +1,161 @@
+---
+title: "SnC clusters ligands communication networks"
+author: "Sushma Nagaraj"
+date: "2026-03-08"
+output: html_document
+params:
+  tissue: "Fibroid"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+suppressPackageStartupMessages({
+  library(domino2)
+  library(purrr)
+  library(dplyr)
+  library(tidyr)
+  library(tibble)
+  library(forcats)
+  library(stringr)
+  library(igraph)
+})
+
+here::i_am("3_domino/integrins_only_without_complexes/collagen_network_from_Fibroblasts_Pericytes.Rmd")
+source("functions/network2df.R")
+source("functions/dom_df_to_igraph.R")
+```
+
+```{r}
+tissue <- params$tissue
+tissue
+```
+
+# Read in the rec_lig differential linkages
+```{r}
+clusters_of_interest <- c("DC", "Endo_artery", "Endo_vein1", "Endo_vein2_not_SnC", "Endo_vein2_SnC", "Lymphatic_endo_not_SnC", "Lymphatic_endo_SnC", "Fibroblast_not_SnC", "Fibroblast_SnC", "Granulocytes", "Macrophages", "Monocytes", "Myeloid", "NK", "Pericyte_SMC_not_SnC", "Pericyte_SMC_SnC", "T_cells")
+#clusters_of_interest <- c("Endo_artery", "Endo_vein1", "Endo_vein2_not_SnC", "Fibroblast_not_SnC", "Pericyte_SMC_not_SnC")
+
+diff_linkages_list <- lapply(clusters_of_interest, function(cluster) {
+  read.csv(here::here("results", "3_domino2", "cell_type_SnC_only_integrins", "differential_linkages_rec_lig_activation",  paste0(cluster, ".differential_linkages.csv")), header = T)
+})
+names(diff_linkages_list) <- clusters_of_interest
+```
+
+# Retain only the linkages found in at least 3 of 4 fibroid samples
+```{r}
+diff_linkages <- list_rbind(diff_linkages_list)
+
+#Fibroid
+diff_linkages <- diff_linkages %>%
+  filter(Fibroid_count >= 3)
+
+diff_linkages$key <- paste0(diff_linkages$cluster, "_", diff_linkages$feature)
+```
+
+
+# Network with ligands from SnC Celltypes
+```{r}
+dom <- readRDS(here::here("results", "3_domino2", "cell_type_SnC_only_integrins", paste0(tissue, ".domino.rds")))
+```
+
+
+```{r}
+cluster <- c("Fibroblast_SnC", "Pericyte_SMC_SnC")
+cluster
+```
+
+# Extract networks for cluster from the Domino object
+```{r}
+outgoing_network <- network2df(dom = dom, sending_cluster = cluster, rec_clusters = clusters_of_interest)
+```
+
+```{r}
+outgoing_network$key <- paste0(outgoing_network$receiving_cluster, "_", outgoing_network$receptor, " <- ", outgoing_network$ligand)
+outgoing_network$ligand_key <- paste0(outgoing_network$sending_cluster, "_", outgoing_network$ligand)
+```
+
+# Read in differentially expressed secreted/Non-secreted for cluster from SnC-vs-nonSnC analysis
+```{r}
+cl <- gsub("_SnC", "", cluster)
+
+de_genes <- lapply(cl, function(x) {
+  SnC.genes <- read.csv(here::here("results", "2_SnC-vs-nonSnC", str_to_lower(tissue), paste0(str_to_lower(tissue), ".", x, ".SnC.genes.csv")), header = TRUE)
+
+  DE_subset <- SnC.genes %>%
+    filter(p_val_adj < 0.05 & abs(avg_log2FC) > 0.3)
+})
+names(de_genes) <- cl
+
+de_genes <- list_rbind(de_genes, names_to = "cell_type")
+de_genes$cell_type <- paste0(de_genes$cell_type, "_SnC")
+de_genes$ligand_key <- paste0(de_genes$cell_type, "_", de_genes$X)
+
+```
+
+# Networks for ligands present in atleast 3 fibroid samples and DE in SnC populations (compared to non-SnC)
+
+```{r}
+# Colors for network plots
+cluster_cols <- c("Fibroblast_not_SnC", "Pericyte_SMC_not_SnC", "SMC_not_SnC", "Epithelial", "Cycling", "T_cells", "NK", "Lymphatic_endo_not_SnC", "Endo_artery", "Endo_vein2_not_SnC", "Endo_vein1", "DC", "Macrophages", "Monocytes", "Myeloid","Granulocytes", "Fibroblast_SnC", "Pericyte_SMC_SnC", "Lymphatic_endo_SnC", "Endo_vein2_SnC", "SMC_SnC")
+names(cluster_cols) <- c("#E69F00", "#56B4E9", "#009E73", "#0072B2", "#D55E00", "#CC79A7", "#7B7B7B", "#FFCB57", "#AADAF4", "#00EEB0", "#F7F19F", "#FFB679", "#E6BCD3", "#954B01", "#8661D1","#BFA4E4", "#b37a00", "#2ba0e3", "#ffba24", "#00bd8b", "#8B820B")
+```
+
+
+# Collagen Signaling
+```{r}
+collagens <- outgoing_network$ligand[grep("COL", outgoing_network$ligand)] |> unique()
+out.net.sub <- outgoing_network[(outgoing_network$ligand_key %in% de_genes$ligand_key) & (outgoing_network$key %in% diff_linkages$key) & (outgoing_network$ligand %in% collagens), ]
+```
+
+
+# Show only non-SnC clusters as receiving clusters - for paper
+# Change cluster names to new names - for paper
+```{r}
+receiving <- c("Endo_artery", "Endo_vein1", "Endo_vein2_not_SnC", "Fibroblast_not_SnC", "Pericyte_SMC_not_SnC")
+out.net.sub <- out.net.sub %>%
+  filter(receiving_cluster %in% receiving)
+
+cluster_map <- c("Endo_artery" = "EC1", "Endo_vein2_not_SnC" = "EC2", "Endo_vein1" = "EC3", "Fibroblast_not_SnC" = "Fibro", "Pericyte_SMC_not_SnC" = "Mural")
+
+out.net.sub %>%
+  mutate(receiving_cluster = cluster_map[receiving_cluster]) -> out.net.sub.renamed
+```
+
+## Network plot
+```{r, fig.height=8}
+out.net.sub.renamed$sending_cluster <- paste0("L_", out.net.sub.renamed$sending_cluster)
+
+send_cols <- cluster_cols[cluster_cols == cluster]
+send_cols_L <- paste0("L_", send_cols)
+names(send_cols_L) <- names(send_cols)
+rec_cols <- cluster_cols[cluster_cols %in% receiving]
+rec_cols_renamed <- cluster_map[rec_cols]
+names(rec_cols_renamed) <- names(rec_cols)
+
+de_genes %>% 
+  filter(p_val_adj < 0.05 & abs(avg_log2FC) > 0.3 & cpdb.secreted) %>%
+  select(X) -> sasp
+sasp <- sasp$X
+names(sasp) <- rep("#00FFFF", length(sasp))
+
+net <- dom_df_to_igraph(out.net.sub.renamed, send_cols_L, rec_cols_renamed, label_additional = sasp)
+coords <- net_layout(net, out.net.sub.renamed)
+plot_network(net, coords, 0)
+```
+
+
+```{r, echo=FALSE, eval=FALSE}
+svglite::svglite(here::here("plots_for_figures", "plots", "Fig_5", "SnC_fibro_peri_collagen_integrin_network_with_TFs.subset_to_nonSnC_receiving_renamed_clusters.svg"), height = 10)
+plot_network(net, coords, 0)
+dev.off()
+
+write.csv(out.net.sub, here::here("plots_for_figures", "data_tables", "Fig_5", "data_in_plots", "collagen_integrin_signaling_network.csv"))
+```
+
+
+```{r}
+sessionInfo()
+```
+
+

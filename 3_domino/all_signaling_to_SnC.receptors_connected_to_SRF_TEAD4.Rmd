@@ -1,0 +1,254 @@
+---
+title: "signals from all clusters to senescent populations and receptors connected downstream to SRF, TEAD4"
+author: "Sushma Nagaraj"
+date: "2024-11-21"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+suppressPackageStartupMessages({
+  library(domino2)
+  library(purrr)
+  library(dplyr)
+  library(tidyr)
+  library(tibble)
+  library(ComplexHeatmap)
+  library(circlize)
+  library(stringr)
+  library(RColorBrewer)
+})
+
+here::i_am("3_domino/all_signaling_to_SnC.receptors_connected_to_SRF_TEAD4.Rmd")
+source("functions/network2df.R")
+```
+
+
+```{r}
+clusters_of_interest <- c("Fibroblast_SnC", "Pericyte_SMC_SnC", "Endo_vein2_SnC")
+```
+
+
+```{r}
+stromal <- c("Endo_artery", "Endo_vein1", "Endo_vein2_not_SnC", "Endo_vein2_SnC", "Lymphatic_endo_not_SnC", "Lymphatic_endo_SnC", "Fibroblast_not_SnC", "Fibroblast_SnC", "Pericyte_SMC_not_SnC", "Pericyte_SMC_SnC", "SMC_not_SnC", "SMC_SnC")
+immune <- c("Monocytes", "Macrophages", "Myeloid", "DC", "Granulocytes", "T_cells", "NK") 
+all <- c(stromal, immune)
+```
+
+
+# Read in the rec_lig differential linkages
+```{r}
+diff_linkages_list <- lapply(clusters_of_interest, function(cluster) {
+  read.csv(here::here("results", "3_domino2", "cell_type_SnC", "differential_linkages_rec_lig_activation",  paste0(cluster, ".differential_linkages.csv")), header = T)
+})
+names(diff_linkages_list) <- clusters_of_interest
+```
+
+
+# Retain only the linkages found in at least 3 of 4 fibroid samples
+```{r}
+diff_linkages <- list_rbind(diff_linkages_list)
+
+diff_linkages <- diff_linkages %>%
+  filter(Fibroid_count >= 3)
+
+diff_linkages$key <- paste0(diff_linkages$cluster, "_", diff_linkages$feature)
+```
+
+# Read in domino object
+```{r}
+dom <- readRDS(here::here("results", "3_domino2", "cell_type_SnC", "Fibroid.domino.rds"))
+```
+
+
+```{r}
+network_all <- network2df(dom = dom, sending_cluster = all, rec_clusters = clusters_of_interest)
+network_all$key <- paste0(network_all$receiving_cluster, "_", network_all$receptor, " <- ", network_all$ligand)
+```
+
+
+```{r}
+network <- network_all %>%
+  filter(key %in% diff_linkages$key)
+
+title <- paste0("All_to_SnC")
+```
+
+
+# Chord plot functions
+```{r}
+circos_plot <- function(network_slice) {
+  set.seed(1)
+  chordDiagram(network_slice[,c("receptor", "transcription_factor", "cluster_cor")],
+              col = network_slice$col, 
+              big.gap = 20,
+              #scale = TRUE,
+              directional = 1, 
+              direction.type = c("diffHeight", "arrows"),
+              #direction.type = c("arrows"),
+              link.arr.type = "big.arrow", 
+              annotationTrack = "grid",
+              preAllocateTracks = list(list(track.height = 0.2),
+                                       list(track.height = 0.08)))
+
+  circos.track(track.index = 1,
+               panel.fun = function(x, y) {
+               circos.text(CELL_META$xcenter, 
+                           CELL_META$ylim[1], 
+                           #str_wrap(CELL_META$sector.index, width = 20), 
+                           str_split(CELL_META$sector.index, pattern = "\\.") |> unlist() |> tail(1),
+                           facing = "clockwise", 
+                           cex = 0.8, 
+                           adj = c(0, 0.5), 
+                           niceFacing = TRUE)},
+               bg.border = NA)
+circos.clear()
+}
+```
+
+# Color scale
+```{r}
+cluster_cols <- c("Fibroblast_not_SnC", "Pericyte_SMC_not_SnC", "SMC_not_SnC", "Epithelial", "Cycling", "T_cells", "NK", "Lymphatic_endo_not_SnC", "Endo_artery", "Endo_vein2_not_SnC", "Endo_vein1", "DC", "Macrophages", "Monocytes", "Myeloid","Granulocytes", "Fibroblast_SnC", "Pericyte_SMC_SnC", "Lymphatic_endo_SnC", "Endo_vein2_SnC", "SMC_SnC")
+names(cluster_cols) <- c("#E69F00", "#56B4E9", "#009E73", "#0072B2", "#D55E00", "#CC79A7", "#7B7B7B", "#FFCB57", "#AADAF4", "#00EEB0", "#F7F19F", "#FFB679", "#E6BCD3", "#954B01", "#8661D1","#BFA4E4", "#b37a00", "#2ba0e3", "#ffba24", "#00bd8b", "#8B820B")
+```
+
+# Circos plot for TF-rec of interest
+```{r}
+tf <- c("SRF", "TEAD4")
+
+cols <- setNames(names(cluster_cols), cluster_cols)
+network_slice <- network %>%
+  filter(transcription_factor %in% tf) %>%
+  mutate(col = recode(receiving_cluster, !!!cols)) %>% 
+  select(receptor, transcription_factor, cluster_cor, receiving_cluster, col) %>%
+  filter(cluster_cor > 0) %>%
+  distinct()
+
+# Cluster legend
+network_slice %>% 
+  select(receiving_cluster, col) %>%
+  distinct %>%
+  deframe -> cl_cols
+cl_legend = Legend(labels = names(cl_cols), title = "Cluster", legend_gp = gpar(fill = cl_cols))
+
+circos_plot(network_slice)
+draw(cl_legend, x = unit(2, "mm"), y = unit(6, "mm"), just = c("left", "bottom"))
+```
+```{r, echo=FALSE, eval=FALSE}
+pdf(here::here("plots_for_figures", "plots", "Fig_5", paste0(title, "_receptors_connected_to_SRF_TEAD4.chord_diagram.pdf")))
+circos_plot(network_slice)
+draw(cl_legend, x = unit(2, "mm"), y = unit(6, "mm"), just = c("left", "bottom"))
+dev.off()
+
+write.csv(network_slice, here::here("plots_for_figures", "data_tables", "Fig_5", "data_in_plots", paste0(title, "_receptors_connected_to_SRF_TEAD4.chord_diagram.csv")))
+```
+
+
+# Heatmaps
+# Heatmap plotting function
+```{r}
+incoming_to_one_cluster <- function(network, title, filter=FALSE, fthresh="Mean") {
+  network.wide <- network %>%
+    select(sending_cluster, product_rec_lig, rec_lig) %>%
+    unique() %>%
+    pivot_wider(names_from = sending_cluster, values_from = product_rec_lig, id_cols = rec_lig) %>%
+    column_to_rownames(var = "rec_lig")
+
+  network.wide[is.na(network.wide)] <- 0
+  if(filter) {
+    thresh <- summary(rowSums(network.wide))[[fthresh]]
+    network.wide <- network.wide[rowSums(network.wide) > thresh, ]
+  } 
+  
+  ht <- Heatmap(as.matrix(network.wide),
+                  cluster_rows = T, 
+                  cluster_columns = T,
+                  col = brewer.pal(n = 9, name = "YlOrRd"),
+                  #clustering_distance_rows = "pearson",
+                  #clustering_distance_columns = "pearson",
+                  show_column_dend = F,
+                  show_row_dend = F,
+                  #column_title_rot = 90,
+                  name = "rec_exp * ligand_exp",
+                  row_title = "Interactions",
+                  row_title_side = "left",
+                  row_names_gp = gpar(fontsize = 9),
+                  column_title = title
+  )
+  return(ht)
+}
+```
+
+# Heatmap showing ligands signaling to the receptors associated with TEAD4 and SRF
+```{r}
+network_slice <- network %>%
+  filter(transcription_factor %in% tf) %>%
+  filter(cluster_cor > 0.1) %>%
+  filter(! sending_cluster %in% c("Lymphatic_endo_not_SnC", "Lymphatic_endo_SnC", "SMC_not_SnC", "SMC_SnC"))
+
+# Additional columns to network df for plotting
+network_slice$rec_lig <- paste0(network_slice$receptor, " <- ", network_slice$ligand)
+network_slice$product_rec_lig <- network_slice$ligand_mean_z_score * network_slice$receptor_mean_z_score
+```
+
+# All to Fibroblast_SnC
+```{r, fig.height=8}
+fib <- network_slice %>%
+  filter(receiving_cluster == "Fibroblast_SnC")
+title <- "All to SnC Fibro"
+ht <- incoming_to_one_cluster(fib, title)
+ht
+```
+
+
+```{r, echo=FALSE, eval=FALSE}
+pdf(here::here("plots_for_figures", "plots", "SuppFig_15", paste0(title, "_ligands _to_receptors_connected_to_SRF_TEAD4.cluster_cor_gt0.1.heatmap.pdf")))
+ht
+dev.off()
+```
+
+# All to Pericyte_SMC_SnC
+```{r, fig.height=8}
+peri <- network_slice %>%
+  filter(receiving_cluster == "Pericyte_SMC_SnC")
+title <- "All to SnC Mural"
+ht <- incoming_to_one_cluster(peri, title)
+ht
+```
+
+
+```{r, echo=FALSE, eval=FALSE}
+pdf(here::here("plots_for_figures", "plots", "SuppFig_15", paste0(title, "_ligands _to_receptors_connected_to_SRF_TEAD4.cluster_cor_gt0.1.heatmap.pdf")))
+ht
+dev.off()
+```
+
+# All to Endo_vein2_SnC
+```{r}
+endo <- network_slice %>%
+  filter(receiving_cluster == "Endo_vein2_SnC")
+title <- "All to SnC EC2"
+ht <- incoming_to_one_cluster(endo, title)
+ht
+```
+
+
+```{r, echo=FALSE, eval=FALSE}
+pdf(here::here("plots_for_figures", "plots", "SuppFig_15", paste0(title, "_ligands _to_receptors_connected_to_SRF_TEAD4.cluster_cor_gt0.1.heatmap.pdf")))
+ht
+dev.off()
+```
+
+
+```{r}
+sessionInfo()
+```
+
+
+
+
+
+
+
+

@@ -1,0 +1,146 @@
+---
+title: "projection drivers"
+output: html_document
+date: "2025-02-03"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+suppressPackageStartupMessages({
+  library(ggplot2)
+  library(dplyr)
+  library(tidyr)
+  library(tibble)
+  library(projectR)
+  library(Seurat)
+})
+
+here::i_am("1_projectR/projection_drivers.Rmd")
+```
+
+```{r}
+SnC_clusters <- c("Fibroblast", "Pericyte_SMC", "SMC", "Lymphatic_endo", "Endo_vein2", "Cycling")
+```
+
+
+# Read in senescence signature
+```{r}
+res0.05 <- read.csv(here::here("ref", "SenSig", "res0.05.human_gene_id.csv"), header = TRUE, stringsAsFactors = FALSE, row.names = 1)
+res0.05sub <- res0.05[!is.na(res0.05$HGNC.symbol), ]
+res0.05sub <- res0.05sub[!res0.05sub$HGNC.symbol == "", ]
+res0.05sub <- res0.05sub[!duplicated(res0.05sub$HGNC.symbol), ]
+SenSig.up <- res0.05sub %>%
+  filter(logFC > 0) %>%
+  select(HGNC.symbol)
+```
+
+
+# Using FindMarkers
+```{r}
+drivers <- lapply(SnC_clusters, function(clust){
+  SnC.genes <- read.csv(here::here("results", "2_SnC-vs-nonSnC", "fibroid", paste0("fibroid", ".", clust, ".SnC.genes.csv")), header = T, row.names = 1)
+  SnC.genes <- SnC.genes %>% 
+    rownames_to_column() %>%
+    filter(avg_log2FC > 0.3 & 
+             p_val_adj < 0.05 & 
+             rowname %in% SenSig.up$HGNC.symbol) %>%
+    arrange(desc(avg_log2FC)) %>%
+    head(25)
+})
+names(drivers) <- SnC_clusters
+
+
+lapply(names(drivers), function(x){
+    ggplot(drivers[[x]], 
+         aes(x = reorder(rowname, avg_log2FC), y = avg_log2FC)) + 
+    geom_col(fill = "gray", col = "darkgray") + 
+    theme_classic() + 
+    theme(axis.text.x = element_text(size = 11, vjust = 0.5), 
+          axis.text.y = element_text(size = 15)) + 
+    coord_flip() + 
+    labs(x = NULL, title = x)
+})
+```
+
+# Save the plots and the data tables used for the plots
+```{r, echo=FALSE, eval=FALSE}
+lapply(names(drivers), function(x){
+  pdf(here::here("plots_for_figures", "plots", "SuppFig_7", paste0(x, ".projection_drivers.pdf")), width = 2)
+  print(
+    ggplot(drivers[[x]], 
+         aes(x = reorder(rowname, avg_log2FC), y = avg_log2FC)) + 
+    geom_col(fill = "gray", col = "darkgray") + 
+    theme_classic() + 
+    theme(axis.text.x = element_text(size = 11, vjust = 0.5), 
+          axis.text.y = element_text(size = 15)) + 
+    coord_flip() + 
+    labs(x = NULL, title = x)
+  )
+  dev.off()
+})
+
+lapply(names(drivers), function(x) {
+  df <- drivers[[x]] %>%
+    select(rowname, avg_log2FC)
+  write.csv(df, here::here("plots_for_figures", "data_tables", "SuppFig_7_using_FindMarkers", paste0(x, ".projection_drivers.csv")))
+})
+```
+
+
+# Using projectionDriverR
+```{r, eval=FALSE}
+seu.tissue <- readRDS(here::here("data", "3_ser.fib.RDS")) 
+seu.tissue$SnC <- ifelse(is.na(seu.tissue$projectR0.01), "not_SnC", "SnC")
+
+res.pos <- res0.05sub[res0.05sub$z > 0, ]
+weightsF.pos <- as.matrix(res.pos$z)
+rownames(weightsF.pos) <- res.pos$HGNC.symbol
+colnames(weightsF.pos) <- "SenSig"
+
+proj_drivers_list <- vector("list", length(SnC_clusters))
+proj_drivers_list <- lapply(SnC_clusters, function(clust) {
+  seu.clust <- seu.tissue[,seu.tissue$cell_type == clust]
+  mydat <- seu.clust@assays$RNA@data
+  mat.norm <- mydat[rownames(mydat) %in% rownames(weightsF.pos), seu.clust$SnC == "not_SnC"]
+  mat.senc <- mydat[rownames(mydat) %in% rownames(weightsF.pos), seu.clust$SnC == "SnC"]
+  drivers <- projectionDriveR(mat.senc, mat.norm, loadings = weightsF.pos, pattern_name = "SenSig", pvalue = 0.005, display = T, normalize_pattern = F)
+})
+names(proj_drivers_list) <- SnC_clusters
+
+
+
+lapply(SnC_clusters, function(clust) {
+  seu.clust <- seu.tissue[,seu.tissue$cell_type == clust]
+  mydat <- seu.clust@assays$RNA@data
+  mat.norm <- mydat[rownames(mydat) %in% rownames(weightsF.pos), seu.clust$SnC == "not_SnC"]
+  mat.senc <- mydat[rownames(mydat) %in% rownames(weightsF.pos), seu.clust$SnC == "SnC"]
+  drivers <- projectionDriveR(mat.senc, mat.norm, loadings = weightsF.pos, pattern_name = "SenSig", pvalue = 0.005, display = F, normalize_pattern = F)
+  conf_intervals <- drivers$mean_ci[drivers$plotted_ci$unweighted$feature_order, ]
+  conf_intervals$mid <- (conf_intervals$low + conf_intervals$high)/2
+  write.csv(conf_intervals, here::here("results", "1_transfer_learning", "projectionDrivers", paste("projection_drivers", "fibroid", gsub("/", "_", clust), "csv", sep = ".")))
+  write.csv(conf_intervals, here::here("plots_for_figures", "data_tables", "projectionDriveR", paste("projection_drivers", "fibroid", gsub("/", "_", clust), "csv", sep = ".")))
+})
+
+
+lapply(SnC_clusters, function(clust) {
+  seu.clust <- seu.tissue[,seu.tissue$cell_type == clust]
+  mydat <- seu.clust@assays$RNA@data
+  mat.norm <- mydat[rownames(mydat) %in% rownames(weightsF.pos), seu.clust$SnC == "not_SnC"]
+  mat.senc <- mydat[rownames(mydat) %in% rownames(weightsF.pos), seu.clust$SnC == "SnC"]
+  drivers <- projectionDriveR(mat.senc, mat.norm, loadings = weightsF.pos, pattern_name = "SenSig", pvalue = 0.005, display = F, normalize_pattern = F)
+  conf_intervals <- drivers$weighted_mean_ci[drivers$plotted_ci$weighted$feature_order, ]
+  conf_intervals$mid <- (conf_intervals$low + conf_intervals$high)/2
+  write.csv(conf_intervals, here::here("results", "1_transfer_learning", "projectionDrivers", paste("weighted_projection_drivers", "fibroid", gsub("/", "_", clust), "csv", sep = ".")))
+  write.csv(conf_intervals, here::here("plots_for_figures", "data_tables", "projectionDriveR", paste("weighted_projection_drivers", "fibroid", gsub("/", "_", clust), "csv", sep = ".")))
+})
+```
+
+
+```{r}
+sessionInfo()
+```
+
+
+
+

@@ -1,0 +1,46 @@
+---
+title: "Differential linkages Rec-Lig activation"
+author: "Sushma Nagaraj"
+date: "2024-09-16"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+suppressPackageStartupMessages({
+  library(domino2)
+  library(Seurat)
+  library(patchwork)
+  library(purrr)
+  library(ComplexHeatmap)
+})
+
+here::i_am("3_domino/differential_linkages.rec_lig_activation.Rmd")
+```
+
+
+#Test differential linkages - differentially activated receptors-TFS
+```{r}
+linkage_summary <- readRDS(here::here("results", "3_domino2", "cell_type_SnC", "differential_linkages_rec_activation", "linkage_summary.rds"))
+
+clusters_of_interest <- clusters_of_interest <- c("DC", "Endo_artery", "Endo_vein1", "Endo_vein2_not_SnC", "Endo_vein2_SnC", "Fibroblast_not_SnC", "Fibroblast_SnC", "Granulocytes", "Lymphatic_endo_not_SnC", "Lymphatic_endo_SnC", "Macrophages", "Monocytes", "Myeloid", "NK", "Pericyte_SMC_not_SnC", "Pericyte_SMC_SnC", "SMC_not_SnC", "SMC_SnC", "T_cells")
+
+diff_linkages <- lapply(clusters_of_interest, function(x) {
+  test_differential_linkages(linkage_summary = linkage_summary, cluster = x, group.by = "group", linkage = "rec_lig")
+})
+names(diff_linkages) <- clusters_of_interest
+
+lapply(seq_along(diff_linkages), function(x) {
+  temp <- diff_linkages[[x]]
+  temp <- temp[order(temp$p.value), ]
+  write.csv(temp, here::here("results", "3_domino2", "cell_type_SnC", "differential_linkages_rec_lig_activation", paste0(names(diff_linkages)[x], ".differential_linkages.csv")))
+})
+
+
+```
+
+
+
+
+

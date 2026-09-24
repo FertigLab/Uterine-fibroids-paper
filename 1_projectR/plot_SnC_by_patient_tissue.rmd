@@ -1,0 +1,138 @@
+---
+title: "plot_SnC_fractions"
+author: "Sushma Nagaraj"
+date: "2024-02-08"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+suppressPackageStartupMessages({
+  library(Seurat)
+  library(ggplot2)
+  library(patchwork)
+  library(ggbeeswarm)
+  library(scCustomize)
+})
+
+here::i_am("1_projectR/plot_SnC_by_patient_tissue.rmd")
+```
+
+
+```{r}
+seu <- readRDS(here::here("data", "3_ser.RDS"))
+```
+
+
+```{r}
+run <- "sigZ_scActualZscores_genes"
+projectR_res <- readRDS(here::here("results", "1_transfer_learning", "projectR", run, "projectSenSig.rds"))
+all(colnames(seu) == names(projectR_res$projection))
+seu <- AddMetaData(seu, metadata = t(projectR_res$projection), col.name = "projectR_weight")
+seu <- AddMetaData(seu, metadata = t(projectR_res$pval), col.name = "projectR_pval")
+seu$projectR0.01 <- ifelse((seu$projectR_pval >= 0.01 | seu$projectR_weight < 0), NA, seu$projectR_weight)
+```
+
+
+```{r}
+cols <- RColorBrewer::brewer.pal(9, "YlOrRd")
+```
+
+# UMAP by tissue and patient, pdfs were saved previously on server using this code 
+```{r, fig.width=20}
+FeaturePlot_scCustom(seu[, seu$Tissue == "Myometrium"], features = "projectR0.01", order = TRUE, colors_use = cols, split.by = "Patient", na_cutoff = NA)
+
+FeaturePlot_scCustom(seu[, seu$Tissue == "Fibroid"], features = "projectR0.01", order = TRUE, colors_use = cols, split.by = "Patient", na_cutoff = NA)
+```
+
+# Annotation
+```{r}
+seu$cell_type <- as.character(seu$Cluster)
+seu$cell_type[seu$Cluster == "0"] <- "Endo_vein1"
+seu$cell_type[seu$Cluster == "1"] <- "Pericyte_SMC"
+seu$cell_type[seu$Cluster == "2"] <- "Endo_vein2"
+seu$cell_type[seu$Cluster == "3"] <- "T_cells"
+seu$cell_type[seu$Cluster == "4"] <- "Endo_artery"
+seu$cell_type[seu$Cluster == "6"] <- "NK"
+seu$cell_type[seu$Cluster == "7"] <- "Damaged_endo"
+seu$cell_type[seu$Cluster == "8"] <- "Lymphatic_endo"
+seu$cell_type[seu$Cluster == "9"] <- "Fibroblast"
+seu$cell_type[seu$Cluster == "11"] <- "Damaged_mye"
+seu$cell_type[seu$Cluster == "12"] <- "Damaged_Epi"
+seu$cell_type[seu$Cluster == "13"] <- "Granulocytes"
+seu$cell_type[seu$Cluster == "14"] <- "SMC"
+seu$cell_type[seu$Cluster == "15"] <- "Cycling"
+seu$cell_type[seu$Cluster == "16"] <- "Epithelial"
+seu$cell_type[seu$Cluster == "5-10.0"] <- "Monocytes"
+seu$cell_type[seu$Cluster == "5-10.1"] <- "DC"
+seu$cell_type[seu$Cluster == "5-10.2"] <- "Myeloid"
+seu$cell_type[seu$Cluster == "5-10.3"] <- "Doublet"
+seu$cell_type[seu$Cluster == "5-10.4"] <- "Macrophages"
+
+df_full <- seu[[c("cell_type", "Tissue", "Patient", "projectR_weight", "projectR_pval", "projectR0.01")]]
+df_full$SnC <- ifelse(is.na(df_full$projectR0.01), "not_SnC", "SnC")
+df_full <- df_full[-which(df_full$cell_type %in% c("Damaged_endo", "Damaged_mye", "Damaged_Epi", "Doublet")), ]
+df_full$cell_type <- as.factor(df_full$cell_type)
+df_full$Tissue <- as.factor(df_full$Tissue)
+
+rm(seu)
+```
+
+
+# Barplots. pdfs were saved previously using this code
+# By patient, showing SnC and non-SnC fraction in the celltypes
+```{r}
+lapply(c("Myometrium", "Fibroid"), function(tissue) {
+  temp <- df_full[df_full$Tissue == tissue, ]
+  tabs <- vector("list", 4)
+  tabs <- lapply(unique(temp$Patient), function(pt) {
+    dat <- unclass(table(temp$SnC[temp$Patient == pt], temp$cell_type[temp$Patient == pt]))
+    sums <- unclass(table(temp$cell_type))
+    sums <- sums[colnames(dat)]
+    if (all.equal(names(sums), colnames(dat))) {
+      tab <- sweep(dat, 2, STATS = sums, FUN = "/") * 100
+    }
+    tab_melt <- reshape2::melt(tab)
+    colnames(tab_melt) <- c("SnC", "Cluster", "Cells")
+    tab_melt$Patient <- pt
+    tab_melt
+  })
+
+  tabs.merge <- do.call("rbind", tabs)
+
+  ggplot(tabs.merge, aes(x = Cluster, y = Cells, fill = SnC)) + geom_col() + facet_wrap(~Patient, ncol = 6) + ylab("% Cells") + coord_flip() + theme_minimal() + theme(axis.text.x = element_text(angle = 90)) + ggtitle(tissue)
+})
+```
+
+
+```{r, echo=FALSE, eval=FALSE}
+lapply(c("Myometrium", "Fibroid"), function(tissue) {
+  temp <- df_full[df_full$Tissue == tissue, ]
+  tabs <- vector("list", 4)
+  tabs <- lapply(unique(temp$Patient), function(pt) {
+    dat <- unclass(table(temp$SnC[temp$Patient == pt], temp$cell_type[temp$Patient == pt]))
+    sums <- unclass(table(temp$cell_type))
+    sums <- sums[colnames(dat)]
+    if (all.equal(names(sums), colnames(dat))) {
+      tab <- sweep(dat, 2, STATS = sums, FUN = "/") * 100
+    }
+    tab_melt <- reshape2::melt(tab)
+    colnames(tab_melt) <- c("SnC", "Cluster", "Cells")
+    tab_melt$Patient <- pt
+    tab_melt
+  })
+
+  tabs.merge <- do.call("rbind", tabs)
+  write.csv(tabs.merge, here::here("plots_for_figures", "data_tables", "SuppFig_8", "data_in_plots", paste0(tissue, "_barplot.csv")))
+})
+
+write.csv(df_full, here::here("plots_for_figures", "data_tables", "SuppFig_8", "Source_data", "TL_metadata.csv"))
+```
+
+
+```{r}
+sessionInfo()
+```
+
+

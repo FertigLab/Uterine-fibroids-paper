@@ -1,0 +1,146 @@
+---
+title: "Fibroid dataset SnC cells analysis"
+author: "Sushma Nagaraj"
+date: "2024-02-20"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+suppressPackageStartupMessages({
+  library(projectR)
+  library(Seurat)
+  library(dplyr)
+  library(tidyverse)
+  library(scales)
+  library(purrr)
+  library(msigdbr)
+  library(fgsea)
+  library(data.table)
+})
+
+here::i_am("2_SnC_cell_analysis/SnC_cell_analysis.Rmd")
+
+source(here::here("functions", "helper_functions.R"))
+```
+
+# Subset by tissue to run DE analysis
+```{r}
+seu.tissue <- readRDS(here::here("data", "3_ser.fib.RDS"))
+tissue <- "fibroid"
+
+#seu.tissue <- readRDS(here::here("data", "3_ser.myo.RDS"))
+#tissue <- "myometrium"
+```
+
+# Differential expression between SnC and non-SnC
+
+# Clusters of interest
+```{r}
+#Fibroid
+SnC_clusters <- c("Fibroblast", "Pericyte_SMC", "SMC", "Lymphatic_endo", "Endo_vein2", "Cycling")
+
+#Myometrium, not running comparisons for clusters with <100 cells
+#SnC_clusters <- c("Fibroblast", "Pericyte_SMC")
+```
+
+# DE analysis with FindMarkers
+```{r}
+seu.tissue$SnC <- ifelse(is.na(seu.tissue$projectR0.01), "not_SnC", "SnC")
+seu.tissue$cell_type.SnC <- paste0(seu.tissue$cell_type, ".", seu.tissue$SnC)
+Idents(seu.tissue) <- seu.tissue$cell_type.SnC
+
+lapply(SnC_clusters, function(clust) {
+  SnC.genes <- FindMarkers(seu.tissue, ident.1 = paste0(clust, ".SnC"), ident.2 = paste0(clust, ".not_SnC"))
+  write.csv(SnC.genes, here::here("results", "2_SnC-vs-nonSnC", tissue, paste0(tissue, ".", clust, ".SnC.genes.csv")))
+})
+```
+
+# Annotation
+```{r}
+lapply(SnC_clusters, function(clust){
+  SnC.genes <- read.csv(here::here("results", "2_SnC-vs-nonSnC", tissue, paste0(tissue, ".", clust, ".SnC.genes.csv")), header = T, row.names = 1)  
+  SnC.genes.ann <- annotate(SnC.genes)
+  write.csv(SnC.genes.ann, here::here("results", "2_SnC-vs-nonSnC", tissue, paste0(tissue, ".", clust, ".SnC.genes.csv")))
+})
+```
+
+
+#get full DE results from FindMarkers
+```{r}
+lapply(SnC_clusters, function(clust) {
+  SnC.genes <- FindMarkers(seu.tissue, ident.1 = paste0(clust, ".SnC"), ident.2 = paste0(clust, ".not_SnC"), logfc.threshold = 0, min.pct = 0, min.cells.group = 1, min.cells.feature = 1)
+  write.csv(SnC.genes, here::here("results", "2_SnC-vs-nonSnC", tissue, paste0(tissue, ".", clust, ".SnC.genes.all.csv")))
+})
+```
+
+#Run fgsea on the DE results
+```{r}
+gsea_dir <- here::here("results", "2_SnC-vs-nonSnC", tissue, "fgsea")
+if(!dir.exists(gsea_dir)) {
+  dir.create(gsea_dir)
+}
+```
+
+#Choose geneset
+```{r}
+geneSets <- c("GO:BP", "H", "KEGG", "REACTOME", "combined_genesets_GOBP_H_REACTOME_custom")
+geneSets <- c("combined_genesets_H_REACTOME")
+```
+
+```{r}
+lapply(geneSets, function(geneSet) {
+  dir <- gsub(":", "", geneSet)
+  if(!dir.exists(file.path(gsea_dir, dir))) {
+    dir.create(file.path(gsea_dir, dir))
+  }
+  if(geneSet == "combined_genesets_GOBP_H_REACTOME") {
+    m_list1 <- get_geneSet("GO:BP", "Homo sapiens")
+    m_list2 <- get_geneSet("H", "Homo sapiens")
+    m_list3 <- get_geneSet("REACTOME", "Homo sapiens")
+    m_list <- c(m_list1, m_list2, m_list3)
+  }else if(geneSet == "combined_genesets_H_REACTOME") {
+    m_list1 <- get_geneSet("H", "Homo sapiens")
+    m_list2 <- get_geneSet("REACTOME", "Homo sapiens")
+    m_list <- c(m_list1, m_list2)
+  }else {
+    m_list <- get_geneSet(geneSet, "Homo sapiens")
+  } 
+  run_gsea(SnC_clusters, m_list, geneSet)
+})
+```
+
+# gsea function
+```{r}
+run_gsea <- function(cell_types, m_list, geneSet) {
+  lapply(cell_types, function(cell_type) {
+    SnC.genes <- read.csv(here::here("results", "2_SnC-vs-nonSnC", tissue, paste0(tissue, ".", cell_type, ".SnC.genes.all.csv")), header = T, row.names = 1)
+    
+    p_vals <- SnC.genes$p_val
+    p_vals[p_vals == 0] <- min(p_vals[p_vals > 0])
+    ranks <- -log10(p_vals) * SnC.genes$avg_log2FC
+    names(ranks) <- rownames(SnC.genes)
+    
+    fgseaRes <- fgsea(pathways=m_list, stats=ranks, eps=0, nPermSimple = 100000)
+    fgseaRestidy <- fgseaRes[order(fgseaRes$padj), ]
+    
+    dir <- gsub(":", "", geneSet)
+    fwrite(fgseaRestidy, file = file.path(gsea_dir, dir, paste0("fgsea.", tissue, ".", cell_type, ".", dir, ".txt")), sep="\t", sep2=c("", " ", ""))
+    topPathwaysUp <- fgseaRes[ES > 0][head(order(pval), n=10), pathway]
+    topPathwaysDown <- fgseaRes[ES < 0][head(order(pval), n=10), pathway]
+    topPathways <- c(topPathwaysUp, rev(topPathwaysDown))
+    pdf(file.path(gsea_dir, dir, paste0("fgsea.", tissue, ".", cell_type, ".gseatable.", dir, ".pdf")), width = 22)
+    print(plotGseaTable(m_list[topPathways], ranks, fgseaRes, gseaParam=0.5))
+    dev.off()
+  })
+}
+
+```
+
+
+
+
+
+
+

@@ -1,0 +1,211 @@
+---
+title: "differential TF activation, SnC vs. non-SnC"
+author: "Sushma Nagaraj"
+date: "2024-05-22"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+suppressPackageStartupMessages({
+  library(domino2)
+  library(Seurat)
+  library(igraph)
+  library(tidyverse)
+  library(ComplexHeatmap)
+  library(ggbeeswarm)
+  library(rstatix)
+})
+
+here::i_am("3_domino/differential_TF_activation.SnC_vs_nonSnC.Rmd")
+source("functions/auc_functions.R")
+```
+
+
+```{r}
+tissue <- "Fibroid"
+dom <- readRDS(here::here("results", "3_domino2", "cell_type_SnC", "Fibroid.domino.rds"))
+
+tissue <- "Myometrium"
+dom <- readRDS(here::here("results", "3_domino2", "cell_type_SnC", "Myometrium.domino.rds"))
+```
+
+
+```{r}
+metadata <- readRDS(here::here("results", "1_transfer_learning", "projectR", "sigZ_scActualZscores_genes", "metadata.TL.rds"))
+metadata$Patient_Tissue <- paste0(metadata$Patient, "_", metadata$Tissue)
+metadata$SnC <- ifelse(is.na(metadata$projectR0.01), "not_SnC", "SnC")
+metadata$cell_type_SnC <- metadata$cell_type
+metadata$cell_type_SnC[metadata$cell_type_SnC %in% c("Fibroblast", "Pericyte_SMC", "SMC", "Lymphatic_endo", "Endo_vein2")] <- paste0(metadata$cell_type_SnC[metadata$cell_type_SnC %in% c("Fibroblast", "Pericyte_SMC", "SMC", "Lymphatic_endo", "Endo_vein2")], "_", metadata$SnC[metadata$cell_type_SnC %in% c("Fibroblast", "Pericyte_SMC", "SMC", "Lymphatic_endo", "Endo_vein2")])
+```
+
+
+```{r}
+cell_types <- c("Fibroblast", "Pericyte_SMC", "SMC", "Lymphatic_endo", "Endo_vein2")
+```
+
+#Wilcoxon test to identify differentially activated TFs
+```{r}
+lapply(cell_types, function(x){
+  interesting_clusters <- c(paste0(x, "_SnC"), paste0(x, "_not_SnC"))
+  diff_TF <- diff_TF_activation_clusters(dom, interesting_clusters = interesting_clusters)
+  write.csv(diff_TF, here::here("results", "3_domino2", "cell_type_SnC", "differential_TF_activation_SnC_vs_nonSnC", tissue, paste0(x, ".diff_TF.SnC_vs_nonSnC.csv")))
+})
+
+```
+
+#Top TFs, padj < 0.05
+```{r}
+topTFS <- lapply(cell_types, function(cell_type){
+  res <- read.csv(here::here("results", "3_domino2", "cell_type_SnC", "differential_TF_activation_SnC_vs_nonSnC", tissue, paste0(cell_type, ".diff_TF.SnC_vs_nonSnC.csv")), header = T, row.names = 1)
+  top <- res[which(res$adj_p_value < 0.05), ]
+  top
+})
+names(topTFS) <- cell_types
+
+#Save Combined result for Fib, Peri, Endo_vein2
+topTFS.list <- lapply(cell_types, function(cell_type){
+  top <- topTFS[[cell_type]]
+  colnames(top) <- gsub(cell_type, "", colnames(top))
+  top <- top %>%
+    rownames_to_column(var = "TF")
+})
+names(topTFS.list) <- cell_types
+topTFS.list <- topTFS.list[c("Fibroblast", "Pericyte_SMC", "Endo_vein2")]
+topTFS.df <- list_rbind(topTFS.list, names_to = "cell_type")
+
+write.csv(topTFS.df, here::here("results", "3_domino2", "cell_type_SnC", "differential_TF_activation_SnC_vs_nonSnC", tissue, "combined_result.fib_peri_ev2.diff_TF.SnC_vs_nonSnC.csv"))
+```
+
+#Heatmap of DE TFs
+```{r}
+pdf(here::here("results", "3_domino2", "cell_type_SnC", "differential_TF_activation_SnC_vs_nonSnC", tissue, "diff_TF.SnC_vs_nonSnC.0.05.heatmap.pdf"))
+lapply(names(topTFS), function(x) {
+  plot.df <- get_tf_auc(dom, tfs = rownames(topTFS[[x]]))
+  clusters <- c(paste0(x, "_SnC"), paste0(x, "_not_SnC"))
+  plot.df <- plot.df %>%
+    filter(cluster %in% clusters)
+  plot.df$cluster <- droplevels(plot.df$cluster)
+  plot.df$Patient_Tissue <- metadata[match(rownames(plot.df), rownames(metadata)), "Patient_Tissue"]
+  plot.df$Patient_Tissue <- factor(plot.df$Patient_Tissue)
+  plot.df <- plot.df %>%
+    group_by(cluster) %>%
+    arrange(Patient_Tissue, .by_group = TRUE)
+  cells <- plot.df[,c("cluster", "Patient_Tissue")]  
+  plot.df <- plot.df %>%
+    ungroup() %>%
+    select(-c("cluster", "Patient_Tissue"))
+  set.seed(10010)
+  cell_anno <- columnAnnotation(cluster = cells$cluster, Patient_Tissue = cells$Patient_Tissue)
+  Heatmap(t(plot.df), 
+          show_column_names = F, 
+          cluster_columns = F, 
+          top_annotation = cell_anno,
+          row_names_gp = gpar(fontsize = 9),
+          name = "TF_Scores")
+})
+dev.off()
+
+
+```
+
+
+```{r}
+all_de <- list_c(lapply(topTFS, rownames)) %>%
+  unique()
+
+plot.df <- get_tf_auc(dom, tfs = all_de)
+clusters <- c(paste0(cell_types, "_SnC"), paste0(cell_types, "_not_SnC"))
+plot.df <- plot.df %>%
+  filter(cluster %in% clusters)
+plot.df$cluster <- droplevels(plot.df$cluster)
+plot.df$Patient_Tissue <- metadata[match(rownames(plot.df), rownames(metadata)), "Patient_Tissue"]
+plot.df$Patient_Tissue <- factor(plot.df$Patient_Tissue)
+plot.df <- plot.df %>%
+  group_by(cluster) %>%
+  arrange(Patient_Tissue, .by_group = TRUE)
+cells <- plot.df[,c("cluster", "Patient_Tissue")]  
+plot.df <- plot.df %>%
+  ungroup() %>%
+  select(-c("cluster", "Patient_Tissue"))
+
+set.seed(1001)
+cell_anno <- columnAnnotation(cluster = cells$cluster, Patient_Tissue = cells$Patient_Tissue)
+Heatmap(t(plot.df), show_column_names = F, cluster_columns = F, top_annotation = cell_anno, name = "TF_Scores")
+```
+
+# Violin plots of DE TFs
+```{r}
+lapply(names(topTFS), function(x) {
+  plot.df <- get_tf_auc(dom, tfs = rownames(topTFS[[x]]))
+  clusters <- c(paste0(x, "_SnC"), paste0(x, "_not_SnC"))
+  plot.df <- plot.df %>%
+    filter(cluster %in% clusters)
+  plot.df$cluster <- droplevels(plot.df$cluster)
+  plot.df$Patient <- metadata[match(rownames(plot.df), rownames(metadata)), "Patient"]
+  plot.df$Tissue <- metadata[match(rownames(plot.df), rownames(metadata)), "Tissue"]
+  tfs <- colnames(plot.df)[-which(colnames(plot.df) %in% c("cluster", "Patient", "Tissue"))]
+  pdf(here::here("results", "3_domino2", "cell_type_SnC", "differential_TF_activation_SnC_vs_nonSnC", tissue, paste0(x, ".diff_TF.SnC_vs_nonSnC.0.05.vln.pdf")), height = 5)
+  lapply(tfs, function(tf) {
+    p1 <-  tf_vln(plot.df, tf)
+    p2 <- tf_vln_2(plot.df, tf)
+    print(p1 + p2)
+  })
+  dev.off()
+})
+```
+
+#Functions
+```{r}
+diff_TF_activation_clusters <- function(dom, interesting_clusters) {
+  TFs <- list_c(dom@linkages$clust_tf[interesting_clusters])
+  TFs <- unique(TFs)
+
+  cells <- dom@clusters[dom@clusters %in% interesting_clusters]
+  cells <- droplevels(cells)
+  auc <- dom@features[TFs, names(cells)]
+
+  #all(names(cells) == colnames(auc))
+  cells_1 <- which(cells == interesting_clusters[1])
+
+  test_res <- apply(auc, 1, function(x) wilcox.test(x[cells_1], x[-cells_1], alternative = 'two.sided')$p.value)
+  test_res_adj <- p.adjust(test_res, method = "BH")
+  
+  median_auc_by_group <- get_median_auc(dom, TFs, interesting_clusters)
+  fc <- median_auc_by_group[names(test_res), interesting_clusters[1]] / median_auc_by_group[names(test_res), interesting_clusters[2]]
+  
+  res <- data.frame(p_value = test_res, 
+                    adj_p_value = test_res_adj, 
+                    grp1 = median_auc_by_group[names(test_res), interesting_clusters[1]], 
+                    grp2 = median_auc_by_group[names(test_res), interesting_clusters[2]], 
+                    fc = fc)
+  colnames(res)[which(colnames(res) == "grp1")] <- paste0("median_auc_", interesting_clusters[1])
+  colnames(res)[which(colnames(res) == "grp2")] <- paste0("median_auc_", interesting_clusters[2])
+  
+  auc <- as.data.frame(t(auc))
+  auc$group <- cells
+  effsize <- auc %>% 
+    rownames_to_column("cell") %>%
+    pivot_longer(cols = where(is.numeric), names_to = "TF", values_to = "AUC") %>%
+    group_by(TF) %>%
+    wilcox_effsize(AUC ~ group)
+  
+  res <- res %>% 
+    rownames_to_column("TF") %>%
+    inner_join(effsize, by = "TF") %>%
+    column_to_rownames("TF")
+  
+  return(res)
+}
+
+tf_vln_2 <- function(auc_mat, regulon) {
+  ggplot(auc_mat, aes(x = cluster, y = get(regulon), col = cluster)) + 
+    geom_violin(trim = TRUE, scale = "width", adjust = 1, fill = NA) + 
+    geom_beeswarm(size = 0.1, method = "compactswarm", corral = "random", corral.width = 0.9) +
+    facet_wrap(~Patient) + 
+    theme_classic() + theme(axis.text.x = element_text(angle = 90), legend.position = "none") + 
+    labs(x = NULL, y = regulon, title = unique(auc_mat$Tissue)) 
+}
+
+```

@@ -1,0 +1,120 @@
+---
+title: "Fibroid dataset SnC cells analysis"
+author: "Sushma Nagaraj"
+date: "2024-02-20"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+suppressPackageStartupMessages({
+  library(ggplot2)
+  library(EnhancedVolcano)
+  library(randomcoloR)
+})
+
+here::i_am("2_SnC_cell_analysis/SnC_cell_analysis.Rmd")
+```
+
+# Clusters of interest
+```{r}
+SnC_clusters <- c("Fibroblast", "Pericyte_SMC", "Endo_vein2")
+```
+
+# Volcano plots with EnhancedVolcano
+```{r, fig.height=8}
+lapply(SnC_clusters, function(clust){
+  SnC.genes <- read.csv(here::here("results", "2_SnC-vs-nonSnC", "fibroid", paste0("fibroid", ".", clust, ".SnC.genes.csv")), header = T, row.names = 1)
+  EnhancedVolcano(SnC.genes, lab = rownames(SnC.genes), x = 'avg_log2FC', y = 'p_val_adj', pCutoff = 0.05, xlim = c(-2.5, 2.5), title = clust)
+})
+```
+
+
+```{r, echo=FALSE, eval=FALSE}
+lapply(SnC_clusters, function(clust){
+  pdf(here::here("plots_for_figures", "plots", "SuppFig_9", paste0(clust, ".volcano_plot.pdf")))
+  SnC.genes <- read.csv(here::here("results", "2_SnC-vs-nonSnC", "fibroid", paste0("fibroid", ".", clust, ".SnC.genes.csv")), header = T, row.names = 1)
+  print(EnhancedVolcano(SnC.genes, lab = rownames(SnC.genes), x = 'avg_log2FC', y = 'p_val_adj', pCutoff = 0.05, xlim = c(-2.5, 2.5), title = clust))
+  dev.off()
+})
+```
+
+# Refined functional annotation for secreted ligands from Abigail
+```{r}
+sec_ligands <- read.csv(here::here("results", "2_SnC-vs-nonSnC", "fibroid", "secreted_ligands.annotated.csv"), header = TRUE, row.names = 1)
+
+table(sec_ligands$Plot.categories)
+
+sec_ligands$Plot.categories <- factor(sec_ligands$Plot.categories, levels = c("ECM component", "ECM remodeling", "Growth factor", "Cytokine", "Chemokine", "TGF-beta superfamily", "TNF superfamily", "Development", "Angiogenesis", "Cell regulation", "Cell adhesion", "Hormone precursor", "Homeostasis regulator", "Hemostasis", "Wnt signaling modulator", "Intracellular transport", "Protein degradation", "Iron uptake"))
+```
+
+
+#Set colors for Secreted groups annotations
+```{r}
+palette <- c("#DF683C", "#874CE3", "#CCABD3", "#7D86D9", "#C5EAD6", "#DA54DC", "#7DBED9", "#83A070", "#D98BD9", "#E4BD5A",  "#D1A28F", "#DFE3A2", "#7FE492", "#E1D9DB", "#D1E457", "#DD5F85", "#81EB50", "#6FE8D1")
+names(palette) <- levels(sec_ligands$Plot.categories)
+```
+
+# Read in differential expression results
+```{r}
+de_genes_list <- lapply(SnC_clusters, function(clust) {
+  SnC.genes <- read.csv(here::here("results", "2_SnC-vs-nonSnC", "fibroid", paste0("fibroid", ".", clust, ".SnC.genes.csv")))
+  SnC.genes <- SnC.genes[SnC.genes$cpdb.secreted & SnC.genes$p_val_adj < 0.05 & abs(SnC.genes$avg_log2FC) > 0.3, ]
+})
+names(de_genes_list) <- SnC_clusters
+```
+
+# Secreted barplots
+
+# Secreted barplot function
+```{r}
+plot_secreted_horizontal <- function(dat, col, title) {
+  dat$group <- factor(dat$group, levels = names(col))
+  dat <- dat[with(dat, order(dat$group, dat$avg_log2FC)), ]
+  dat$X <- factor(dat$X, levels = dat$X)
+  ggplot(dat, aes(x = X, y = avg_log2FC, fill = group)) + 
+    geom_col() + 
+    theme_classic() + 
+    theme(axis.text.x = element_text(angle = 90, size = 11, hjust = 1, vjust = 0.5)) + 
+    labs(x = NULL, title = title) + 
+    scale_fill_manual(values = col)
+}
+```
+
+
+```{r, fig.width=8}
+lapply(seq_along(de_genes_list), function(x) {
+  de <- de_genes_list[[x]]
+  de$group <- sec_ligands[match(de$X, sec_ligands$X), "Plot.categories"]
+  plot_secreted_horizontal(de, palette, names(de_genes_list)[x])
+})
+```
+
+
+```{r, echo=FALSE, eval=FALSE}
+lapply(seq_along(de_genes_list), function(x) {
+  pdf(here::here("plots_for_figures", "plots", "SuppFig_9", paste0(names(de_genes_list)[x], ".secreted_ligands.barplots.horizontal.pdf")), height = 4, width = 10)
+  de <- de_genes_list[[x]]
+  de$group <- sec_ligands[match(de$X, sec_ligands$X), "Plot.categories"]
+  print(plot_secreted_horizontal(de, palette, names(de_genes_list)[x]))
+  dev.off()
+})
+```
+
+```{r}
+sessionInfo()
+```
+
+
+
+
+
+
+
+
+
+
+
+
+

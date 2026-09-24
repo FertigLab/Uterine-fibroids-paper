@@ -1,0 +1,122 @@
+---
+title: "Plot top 10 target genes for Mechanosensory TFs"
+author: "Sushma Nagaraj"
+date: "2025-08-28"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+suppressPackageStartupMessages({
+  library(Seurat)
+  library(domino2)
+  library(ggplot2)
+  library(purrr)
+  library(ggpubr)
+})
+
+here::i_am("3_domino/plot_TF_targets.Rmd")
+```
+
+
+```{r}
+tissue <- "Fibroid"
+dom <- readRDS(here::here("results", "3_domino2", "cell_type_SnC", paste0(tissue, ".domino.rds")))
+```
+
+
+```{r}
+tfs <- c("SRF", "TEAD4")
+tf_targets <- dom@linkages$tf_targets[tfs]
+all_targets <- list_c(tf_targets) %>%
+  unique()
+
+rm(dom)
+```
+
+
+```{r}
+seu <- readRDS(here::here("data", "3_ser.fib.RDS"))
+
+seu$SnC <- ifelse(is.na(seu$projectR0.01), "not_SnC", "SnC")
+seu$cell_type_SnC <- seu$cell_type
+seu$cell_type_SnC[seu$cell_type_SnC %in% c("Fibroblast", "Pericyte_SMC", "Endo_vein2")] <- paste0(seu$cell_type_SnC[seu$cell_type_SnC %in% c("Fibroblast", "Pericyte_SMC", "Endo_vein2")], "_", seu$SnC[seu$cell_type_SnC %in% c("Fibroblast", "Pericyte_SMC", "Endo_vein2")])
+
+seu <- subset(seu, subset = seu$cell_type_SnC %in% c("Fibroblast_SnC", "Pericyte_SMC_SnC", "Endo_vein2_SnC"))
+```
+
+
+```{r}
+mymat <- AverageExpression(seu, assays = "RNA", layer = "data", group.by = "cell_type_SnC", features = all_targets)$RNA
+
+mymat <- as.matrix(mymat)
+```
+
+### Barplot function
+```{r}
+barplot <- function(genes, title) {
+  df <- as.data.frame(genes)
+  colnames(df) <- "Avg_Exp"
+  df$gene <- factor(rownames(df), levels = rownames(df))
+
+  ggplot(df, aes(x = gene, y = Avg_Exp)) + geom_col(fill = "#A8554EFF") + theme_pubr() + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1, size = 11)) + labs(x = NULL, title = title) 
+}
+```
+
+
+### Top 10 TEAD4 targets by avg expression for Endo vein2
+```{r}
+dat <- mymat[tf_targets$TEAD4, "Endo-vein2-SnC"]
+top <- dat[order(dat, decreasing = TRUE)] %>% 
+  head(n = 10) %>% 
+  as.data.frame()
+
+colnames(top) <- "Avg_Exp"
+top$gene <- factor(rownames(top), levels = rownames(top))
+
+ggplot(top, aes(x = gene, y = Avg_Exp)) + geom_col(fill = "#A8554EFF") + theme_pubr() + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1, size = 11)) + labs(x = NULL, title = "Top 10 TEAD4 targets in SnC EV2") 
+```
+
+
+```{r, echo=FALSE, eval=FALSE}
+pdf(here::here("plots_for_figures", "plots", "Fig_5", "TEAD4_targets_in_SnC_EV2.pdf"), height = 2.5, width = 4)
+ggplot(top, aes(x = gene, y = Avg_Exp)) + geom_col(fill = "#A8554EFF") + theme_pubr() + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1, size = 11)) + labs(x = NULL, title = "Top 10 TEAD4 targets in SnC EV2") 
+dev.off()
+
+write.csv(top, here::here("plots_for_figures", "data_tables", "Fig_5", "data_in_plots", "TEAD4_targets_in_SnC_EV2.csv"))
+```
+
+### Top 10 SRF targets by avg expression for SnC Fibroblast, SnC Pericyte 
+```{r}
+tf <- "SRF"
+dat <- mymat[tf_targets[[tf]], c("Fibroblast-SnC", "Pericyte-SMC-SnC")]
+
+top_10 <- apply(dat, 2, function(x) { rownames(dat)[order(x, decreasing = TRUE)] %>% head(n = 10) })
+
+lapply(c("Fibroblast-SnC", "Pericyte-SMC-SnC"), function(cl) {
+  top <- dat[top_10[,cl], cl]
+  barplot(top, paste0(tf, "_targets_in_", cl, ".pdf"))
+})
+```
+
+
+```{r, echo=FALSE, eval=FALSE}
+lapply(c("Fibroblast-SnC", "Pericyte-SMC-SnC"), function(cl) {
+  top <- dat[top_10[,cl], cl]
+
+  pdf(here::here("plots_for_figures", "plots", "Fig_5", paste0(tf, "_targets_in_", cl, ".pdf")), height = 2.5, width = 4)
+  print(barplot(top, paste0(tf, "_targets_in_", cl, ".pdf")))
+  dev.off()
+  
+  write.csv(top, here::here("plots_for_figures", "data_tables", "Fig_5", "data_in_plots", paste0(tf, "_targets_in_", cl, ".csv")))
+})
+```
+
+
+```{r}
+sessionInfo()
+```
+
+
+

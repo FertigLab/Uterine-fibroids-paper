@@ -1,0 +1,238 @@
+---
+title: "Create RL map"
+author: "Sushma Nagaraj"
+date: "2024-03-06"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+suppressPackageStartupMessages({
+  library(dplyr)
+  library(tidyverse)
+  library(purrr)
+  library(tidyr)
+})
+
+here::i_am("3_domino/create_RL_map.Rmd")
+```
+
+#cellphoneDB file paths
+```{r}
+cpdb_dir <- "ref/cpdb/v4.0.0"
+cpdb_files <- list.files(cpdb_dir, full.names = TRUE)
+cpdb_files <- cpdb_files[grep("_input.csv", cpdb_files)]
+names(cpdb_files) <- sapply(cpdb_files, function(x) 
+    strsplit(x, "/") |>
+    unlist() |>
+    rev() |>
+    head(1) |> 
+    strsplit("_") |> 
+    unlist() |>
+    head(1))
+
+database_name <- "CellPhoneDB_v4.0.0"
+```
+
+# Read in files
+```{r}
+genes <- read_file(cpdb_files["gene"])
+proteins <- read_file(cpdb_files["protein"], set_unannotated = TRUE)
+interactions <- read_file(cpdb_files["interaction"])
+complexes <- read_file(cpdb_files["complex"])
+```
+
+#Create the initial RL map
+```{r}
+rl_map.list <- map(seq_len(nrow(interactions)), function(x) {
+  inter <- interactions[x, ]
+  a_features <- map_interaction(interacting_partner = inter[["partner_a"]])
+  b_features <- map_interaction(interacting_partner = inter[["partner_b"]])
+  if (!is.null(a_features) && !is.null(b_features)) {
+    colnames(a_features) <- paste0(colnames(a_features), "_A")
+    colnames(b_features) <- paste0(colnames(b_features), "_B")
+    i_features <- expand_grid(a_features, b_features)
+    i_features[["int_pair"]] <- paste(i_features[["name_A"]], i_features[["name_B"]], sep = " & ")
+    i_features[["annotation_strategy"]] <- inter[["annotation_strategy"]]
+    i_features[["source"]] <- inter[["source"]]
+    i_features[["database_name"]] <- database_name
+    return(i_features)
+  }
+})
+
+rl_map.df <- list_rbind(rl_map.list)
+rl_map.df <- rl_map.df[!(rl_map.df$type_A == "R" & rl_map.df$type_B == "R") & !(rl_map.df$type_A == "L" & rl_map.df$type_B == "L"), ]
+rl_map.df <- rl_map.df[, c("int_pair", "name_A", "uniprot_A", "gene_A", "type_A", "name_B", "uniprot_B", "gene_B", "type_B", "annotation_strategy", "source", "database_name")]
+
+##OR##
+
+#rl_map.df <- rl_map(genes = genes, proteins = proteins, interactions = interactions, complexes = complexes, database_name = "CellPhoneDB_v4.0.0")
+```
+
+#Add in collagen integrin interactions
+```{r}
+integrin_interactions <- interactions[grep("integrin", interactions$partner_b), ] #No interactions found with integrin complexes as partner_a
+
+#Collagens
+collagens <- genes[grep("COL\\d+", genes$gene_name), ]
+
+integrin_collagen_interactions <- integrin_interactions[integrin_interactions$partner_a %in% collagens$uniprot, ]
+integrin_complexes <- complexes[complexes$complex_name %in% integrin_collagen_interactions$partner_b, ]
+integrin_complexes$receptor <- "True" #Set the integrin complexes as receptors to build rl map for interactions with collagens 
+
+integrin_col_int <- rl_map(genes = genes, proteins = proteins, interactions = integrin_collagen_interactions, complexes = integrin_complexes, database_name = "CellPhoneDB_v4.0.0")
+
+cpdb <- rbind(rl_map.df, integrin_col_int)
+saveRDS(cpdb, file = here::here("results", "3_domino2", "cpdb_rl_map.rds"))
+write.csv(cpdb_rl_map, here::here("results", "3_domino2", "cpdb_rl_map.csv"))
+```
+
+# Additional integrin only analysis
+# Create an RL map for only integrins and split the integrin complexes 
+```{r}
+integrin_interactions <- interactions[grep("integrin", interactions$partner_b), ] #No interactions found with integrin complexes as partner_a
+integrin_complexes <- complexes[complexes$complex_name %in% integrin_interactions$partner_b, ]
+integrin_complexes$receptor <- "True"
+integrin_int <- rl_map(genes = genes, proteins = proteins, interactions = integrin_interactions, complexes = integrin_complexes, database_name = "CellPhoneDB_v4.0.0")
+integrin_int$name_B <- integrin_int$gene_B
+integrin_int %>% 
+  separate_longer_delim(c("name_B", "uniprot_B", "gene_B"), delim = ",") -> integrin_int
+integrin_int %>%
+  mutate(int_pair = paste0(name_A, " & ", name_B)) %>%
+  distinct -> integrin_int
+
+saveRDS(integrin_int, here::here("results", "3_domino2", "cpdb_integrins_rl_map.rds"))
+```
+
+
+#Functions
+```{r}
+# Rename this function
+read_file <- function(filename, set_unannotated = FALSE) {
+  my_file <- read.csv(filename, stringsAsFactors = FALSE)
+  if (set_unannotated) {
+    gene_features <- c("transmembrane", "peripheral", "secreted", "secreted_highlight", "receptor", "integrin", "other")
+    my_file[my_file$receptor == "", colnames(my_file) %in% gene_features] <- "False"
+  }
+  # change cases of True/False syntax from Python to TRUE/FALSE R syntax
+  for (x in colnames(my_file)) {
+    if (identical(unique(my_file[[x]]), c("True", "False")) | identical(unique(my_file[[x]]), c("False","True"))) {
+      my_file[[x]] <- ifelse(my_file[[x]] == "True", TRUE, FALSE)
+    }
+  }
+  return(my_file)
+}
+
+rl_map <- function(genes, proteins, interactions, complexes, database_name, orthomap = NULL) {
+  rl_map.list <- map(seq_len(nrow(interactions)), function(x) {
+    inter <- interactions[x, ]
+    a_features <- map_interaction(interacting_partner = inter[["partner_a"]], genes, proteins, complexes, orthomap)
+    b_features <- map_interaction(interacting_partner = inter[["partner_b"]], genes, proteins, complexes, orthomap)
+    if (!is.null(a_features) && !is.null(b_features)) {
+      colnames(a_features) <- paste0(colnames(a_features), "_A")
+      colnames(b_features) <- paste0(colnames(b_features), "_B")
+      i_features <- expand_grid(a_features, b_features)
+      i_features[["int_pair"]] <- paste(i_features[["name_A"]], i_features[["name_B"]], sep = " & ")
+      i_features[["annotation_strategy"]] <- inter[["annotation_strategy"]]
+      i_features[["source"]] <- inter[["source"]]
+      i_features[["database_name"]] <- database_name
+      return(i_features)
+    }
+  })
+
+  rl_map.df <- list_rbind(rl_map.list)
+  rl_map.df <- rl_map.df[!(rl_map.df$type_A == "R" & rl_map.df$type_B == "R") & !(rl_map.df$type_A == "L" & rl_map.df$type_B == "L"), ]
+  rl_map.df <- rl_map.df[, c("int_pair", "name_A", "uniprot_A", "gene_A", "type_A", "name_B", "uniprot_B", "gene_B", "type_B", "annotation_strategy", "source", "database_name")]
+  return(rl_map.df)
+}
+
+map_interaction <- function(interacting_partner, genes, proteins, complexes, map_ortholog=NULL) {
+  features <- NULL
+  if (interacting_partner %in% proteins[["uniprot"]]) {
+    features <- map_protein(interacting_partner, genes, proteins, map_ortholog)
+  } else if (interacting_partner %in% complexes[["complex_name"]]) {
+    features <- map_complex(interacting_partner, genes, complexes, map_ortholog)
+  }
+  return(features)
+}
+
+map_protein <- function(interacting_partner, genes, proteins, map_ortholog=NULL) {
+  features <- NULL
+  protein <- proteins[proteins[["uniprot"]] == interacting_partner, ]
+  gene <- unique(genes[genes[["uniprot"]] == protein[["uniprot"]], c("gene_name")])  # Sometimes we get multiple gene_names for one uniprot: Q7Z5A7, P01562. This code will create a separate entry for each gene
+  if (!is.null(map_ortholog)) {
+    orthologs <- mapOrtholog(gene, map_ortholog)
+    if (is.null(orthologs)) {
+      features <- NULL
+      return(features)
+    } else {
+      gene <- list_c(orthologs) 
+    }
+  }
+  features <- data.frame(uniprot = protein[["uniprot"]], gene = gene, type = ifelse(protein[["receptor"]], "R", "L"), name = gene)
+  return(features)
+}
+
+map_complex <- function(interacting_partner, genes, complexes, map_ortholog=NULL) {
+  features <- NULL
+  complex <- complexes[complexes[["complex_name"]] == interacting_partner, ]
+  uniprot <- as.character(complex[, c("uniprot_1", "uniprot_2", "uniprot_3", "uniprot_4")])
+  uniprot <- uniprot[uniprot != ""]
+  gene <- sapply(uniprot, function(x) {
+    unique(genes[genes[["uniprot"]] == x, c("gene_name")])
+  })
+  if (!is.null(map_ortholog)) {
+    orthologs <- mapOrtholog(gene, map_ortholog)
+    if (is.null(orthologs)) {
+      features <- NULL
+      return(features)
+    } else if (orthologs |> some(is_empty)) { #Not all the genes in the complex have orthologs
+      features <- NULL
+      return(features)
+    } else if (orthologs |> some(\(x) length(x) != 1)) { #not including the in RL map if some genes in the complex have multiple orthologs, also catches the empty ones, earlier check may be a bit redundant
+      features <- NULL
+      return(features)
+    } else {
+      gene <- list_c(orthologs) |> paste(collapse = ",")
+    }
+  } else {
+    gene <- paste(gene, collapse = ",")
+  }
+  features <- data.frame(uniprot = paste(uniprot, collapse = ","), gene = gene, type = ifelse(complex[["receptor"]], "R", "L"), name = interacting_partner)
+  return(features)
+}
+
+
+mapOrtholog <- function(gene, orthoMap) {
+  #gene may contain more than one gene_name. handle one at a time
+  if(any(gene %in% orthoMap[, 1])) {
+    ortho <- gene |>
+      set_names() |>
+      map(\(x) resolve_one_to_many(x, unique(orthoMap[orthoMap[, 1] == x, 2])))
+  } else {
+    ortho <- NULL
+  }
+  return(ortho)
+}
+
+#Handle one-many human-mouse mapping
+#Check if one of the mouse orthologs has the same name - keep only that. Else keep all
+resolve_one_to_many <- function(gene, orthologs) {
+  matching_name <- str_to_title(gene)
+  if (matching_name %in% orthologs) {
+    gene <- matching_name
+  } else {
+    gene <- orthologs
+  }
+  return(gene)
+}
+```
+
+
+Patient_Tissue
+[1] "FP10_Myometrium" "FP10_Fibroid"    "FP6_Fibroid"     "FP8_Myometrium" 
+[5] "FP8_Fibroid"     "FP16_Fibroid"    "FP16_Myometrium"
+
+Tissue
+"Myometrium" "Fibroid"

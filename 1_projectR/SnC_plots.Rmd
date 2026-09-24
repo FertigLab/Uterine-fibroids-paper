@@ -1,0 +1,165 @@
+---
+title: "SnC UMAP and Violin plots"
+output: html_document
+date: "2024-12-04"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+suppressPackageStartupMessages({
+  library(Seurat)
+  library(RColorBrewer)
+  library(ggplot2)
+  library(patchwork)
+  library(ggbeeswarm)
+  library(scCustomize)
+  library(svglite)
+  library(ggpubr)
+})
+
+here::i_am("1_projectR/SnC_plots.rmd")
+```
+
+#Read in Seurat object and add clustering, projectR results
+```{r}
+seu <- readRDS(here::here("data", "3_ser.RDS"))
+
+seu$cell_type <- as.character(seu$Cluster)
+seu$cell_type[seu$Cluster == "0"] <- "Endo_vein1"
+seu$cell_type[seu$Cluster == "1"] <- "Pericyte_SMC"
+seu$cell_type[seu$Cluster == "2"] <- "Endo_vein2"
+seu$cell_type[seu$Cluster == "3"] <- "T_cells"
+seu$cell_type[seu$Cluster == "4"] <- "Endo_artery"
+seu$cell_type[seu$Cluster == "6"] <- "NK"
+seu$cell_type[seu$Cluster == "7"] <- "Damaged_endo"
+seu$cell_type[seu$Cluster == "8"] <- "Lymphatic_endo"
+seu$cell_type[seu$Cluster == "9"] <- "Fibroblast"
+seu$cell_type[seu$Cluster == "11"] <- "Damaged_mye"
+seu$cell_type[seu$Cluster == "12"] <- "Damaged_Epi"
+seu$cell_type[seu$Cluster == "13"] <- "Granulocytes"
+seu$cell_type[seu$Cluster == "14"] <- "SMC"
+seu$cell_type[seu$Cluster == "15"] <- "Cycling"
+seu$cell_type[seu$Cluster == "16"] <- "Epithelial"
+seu$cell_type[seu$Cluster == "5-10.0"] <- "Monocytes"
+seu$cell_type[seu$Cluster == "5-10.1"] <- "DC"
+seu$cell_type[seu$Cluster == "5-10.2"] <- "Myeloid"
+seu$cell_type[seu$Cluster == "5-10.3"] <- "Doublet"
+seu$cell_type[seu$Cluster == "5-10.4"] <- "Macrophages"
+
+projectR_res <- readRDS(here::here("results", "1_transfer_learning", "projectR", "sigZ_scActualZscores_genes", "projectSenSig.rds"))
+all(colnames(seu) == names(projectR_res$projection))
+seu <- AddMetaData(seu, metadata = t(projectR_res$projection), col.name = "projectR_weight")
+seu <- AddMetaData(seu, metadata = t(projectR_res$pval), col.name = "projectR_pval")
+seu$projectR0.05 <- ifelse((seu$projectR_pval >= 0.05 | seu$projectR_weight < 0), NA, seu$projectR_weight)
+seu$projectR0.01 <- ifelse((seu$projectR_pval >= 0.01 | seu$projectR_weight < 0), NA, seu$projectR_weight)
+
+remove <- c('Damaged_endo',"Doublet",'Damaged_mye','Damaged_Epi')
+keep <- unique(seu$cell_type)
+keep <- keep[!keep %in% remove]
+seu <- subset(seu, subset = cell_type %in% keep)
+
+table(seu$cell_type)
+```
+
+#Set color scale
+```{r}
+cols <- brewer.pal(9, "YlOrRd")
+```
+
+#UMAP of the full dataset showing senescence scores
+```{r}
+#pdf(here::here("results", "figures", "UMAP.projection_weights.pdf"))
+FeaturePlot_scCustom(seu, 
+                     features = "projectR0.01", 
+                     order = TRUE, 
+                     colors_use = cols, 
+                     na_cutoff = NA) +  
+  theme(axis.text.x=element_blank(),
+        axis.text.y=element_blank(), 
+        axis.ticks=element_blank(),
+        axis.title.x=element_blank(),
+        axis.title.y=element_blank())
+#dev.off()
+```
+
+#SVG
+```{r, eval=FALSE}
+svglite(here::here("results", "figures", "UMAP.projection_weights.svg"))
+FeaturePlot_scCustom(seu, 
+                     features = "projectR0.01", 
+                     order = TRUE, 
+                     colors_use = cols, 
+                     na_cutoff = NA) +  
+  theme(axis.text.x=element_blank(),
+        axis.text.y=element_blank(), 
+        axis.ticks=element_blank(),
+        axis.title.x=element_blank(),
+        axis.title.y=element_blank())
+dev.off()
+```
+
+#UMAP showing senescence scores by tissue
+```{r}
+#pdf(here::here("results", "figures", "UMAP.projection_weights.by_tissue.pdf"), height = 5, width = 10)
+FeaturePlot_scCustom(seu, 
+                     features = "projectR0.01", 
+                     order = TRUE, 
+                     colors_use = cols, 
+                     split.by = "Tissue", 
+                     na_cutoff = NA)
+#dev.off()
+```
+
+#SVG
+```{r, eval=FALSE}
+svglite(here::here("results", "figures", "UMAP.projection_weights.by_tissue.svg"))
+FeaturePlot_scCustom(seu, 
+                     features = "projectR0.01", 
+                     order = TRUE, 
+                     colors_use = cols, 
+                     split.by = "Tissue", 
+                     na_cutoff = NA)
+dev.off()
+```
+
+#Violin plots of projection weights
+```{r}
+df <- seu[[c("cell_type", "Tissue", "projectR_weight", "projectR_pval", "projectR0.01")]]
+df$SnC <- ifelse(is.na(df$projectR0.01), "not_SnC", "SnC")
+df <- df[-which(df$cell_type %in% c("DC", "Granulocytes", "Macrophages", "Monocytes", "Myeloid", "NK", "T_cells")), ]
+df$cell_type <- as.factor(df$cell_type)
+df$Tissue <- as.factor(df$Tissue)
+
+pdf(here::here("results", "figures", "Violin_plots.projection_weights.by_tissue.pdf"), height = 5, width = 10)
+ggplot(df, aes(x = cell_type, y = projectR_weight)) +
+  geom_beeswarm(aes(color = SnC), size = 0.1, method = "compactswarm", corral = "random", corral.width = 0.9, priority = "density") +
+  geom_violin(trim = TRUE, scale = "width", adjust = 1, fill = NA) +
+  facet_grid(~Tissue) +
+  scale_color_manual(values = list("not_SnC" = "gray", "SnC" = "#E76818")) + 
+  #ggtitle("Using gene-wise z-scores") + 
+  theme_pubr() + 
+  theme(axis.text.x = element_text(size = 13, angle = 45, hjust = 1, vjust = 1))
+dev.off()
+```
+
+#SVG
+```{r, eval=FALSE}
+svglite(here::here("results", "figures", "Violin_plots.projection_weights.by_tissue.svg"))
+ggplot(df, aes(x = cell_type, y = projectR_weight)) +
+  geom_beeswarm(aes(color = SnC), size = 0.1, method = "compactswarm", corral = "random", corral.width = 0.9, priority = "density") +
+  geom_violin(trim = TRUE, scale = "width", adjust = 1, fill = NA) +
+  facet_grid(~Tissue) +
+  scale_color_manual(values = list("not_SnC" = "gray", "SnC" = "#E76818")) + 
+  #ggtitle("Using gene-wise z-scores") + 
+  theme_pubr() + 
+  theme(axis.text.x = element_text(size = 13, angle = 45, hjust = 1, vjust = 1))
+dev.off()
+```
+
+```{r}
+sessionInfo()
+```
+
+
+

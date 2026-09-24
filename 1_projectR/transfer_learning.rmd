@@ -1,0 +1,73 @@
+---
+title: "Senescent cell identification in human fibroids"
+author: "Sushma Nagaraj"
+date: "2024-02-07"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+suppressPackageStartupMessages({
+  library(Seurat)
+  library(projectR)
+  library(ggplot2)
+  library(patchwork)
+  library(ggbeeswarm)
+  library(purrr)
+})
+
+here::i_am("1_projectR/transfer_learning.rmd")
+```
+
+```{r}
+seu <- readRDS(here::here("data", "3_ser.RDS"))
+```
+
+#Read in senescence signature
+```{r}
+res0.05 <- read.csv(here::here("ref", "SenSig", "res0.05.human_gene_id.csv"), header = TRUE, stringsAsFactors = FALSE, row.names = 1)
+res0.05sub <- res0.05[!is.na(res0.05$HGNC.symbol), ]
+res0.05sub <- res0.05sub[!res0.05sub$HGNC.symbol == "", ]
+res0.05sub <- res0.05sub[!duplicated(res0.05sub$HGNC.symbol), ]
+```
+
+#ProjectR
+```{r}
+if(!dir.exists(here::here("results", "1_transfer_learning"))) {
+  dir.create(here::here("results", "1_transfer_learning"))
+}
+
+if(!dir.exists(here::here("results", "1_transfer_learning", "projectR"))) {
+  dir.create(here::here("results", "1_transfer_learning", "projectR"))
+}
+```
+
+#Select inputs for projectR
+```{r}
+mydat <- seu@assays$RNA@data
+mydat <- mydat[rownames(mydat) %in% res0.05sub$HGNC.symbol, ]
+mydat <- as.matrix(mydat)
+
+run <- "sigZ_scActualZscores_genes"
+mydat <- t(scale(t(mydat)))
+weightsF <- as.matrix(res0.05sub$z)
+rownames(weightsF) <- res0.05sub$HGNC.symbol
+colnames(weightsF) <- "QLFstat"
+```
+
+#Run projectR 
+```{r}
+loading <- weightsF
+projectSenSig <- projectR(mydat, loadings = loading, full=TRUE)
+if(!dir.exists(here::here("results", "1_transfer_learning", "projectR", run))) {
+  dir.create(here::here("results", "1_transfer_learning", "projectR", run))
+}
+saveRDS(projectSenSig, here::here("results", "1_transfer_learning", "projectR", run, "projectSenSig.rds"))
+```
+
+
+
+
+
+
