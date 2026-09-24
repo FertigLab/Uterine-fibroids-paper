@@ -1,7 +1,7 @@
 # Senescence and dominoSignal analysis for the paper "Senescent cell networks link matrix remodeling and vascular dysfunction in human uterine fibroids"
 
 ### Data and preprocessing
-The single-cell RNA sequencing raw data used in this analysis will be available for download on NCBI GEO. The preprocessing and annotation for the scRNA-seq was performed as described in [fibroid_reproducibility](Elisseeff-Lab/fibroid_reproducibility: Code to reproduce various fibroid single cell analyses). 
+The single-cell RNA sequencing raw data used in this analysis will be available for download on NCBI GEO. The preprocessing and annotation for the scRNA-seq was performed as described in [fibroid_reproducibility](https://github.com/Elisseeff-Lab/fibroid_reproducibility/tree/main). 
 
 ### To make a local copy of this repository
 
